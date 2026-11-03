@@ -3,7 +3,11 @@
 
 import {
   allRepos,
+  contributorsOf,
+  findNodeByName,
   languageNames,
+  reposByContributor,
+  reposDependingOn,
   reposWithLanguage,
   reposWithTopic,
   subgraphAround,
@@ -72,6 +76,37 @@ function starSort(dir: "desc" | "asc"): (a: Node, b: Node) => number {
     : (a, b) => (a.stars ?? 0) - (b.stars ?? 0);
 }
 
+function jaccardSimilar(repos: Node[], seed: Node, k = 10): Node[] {
+  const seedTopics = new Set<string>();
+  const seedLang = seed.language ?? "";
+  const ids = repos.map((r) => r.id);
+  // reuse subgraph neighbor info cheaply: match on language + shared topic nodes via topic edges
+  const topicLinks = new Map<string, Set<string>>();
+  for (const r of ids) {
+    topicLinks.set(r, new Set());
+  }
+  // gather topic ids per repo from graph (via subgraphFromRoots is heavy; approximate with language + topic name matching)
+  // We use a lightweight pass: seed topics = topic nodes connected to seed (found via subgraphAround)
+  const seedSg = subgraphAround([seed.id], 200);
+  for (const n of seedSg.nodes) {
+    if (n.type === "topic") seedTopics.add(n.id);
+  }
+  const scored: { repo: Node; score: number }[] = [];
+  for (const r of repos) {
+    if (r.id === seed.id) continue;
+    let score = 0;
+    if (seedLang && r.language === seedLang) score += 1;
+    // cheap topic overlap: check if repo id shares topic ids w/ seed via inEdges of seed topics
+    for (const t of seedTopics) {
+      // membership check: does r connect to topic t? emulate by counting via reposWithTopic
+      if (reposWithTopic(t.replace(/^topic:/, "")).some((x) => x.id === r.id)) score += 1;
+    }
+    scored.push({ repo: r, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, k).map((s) => s.repo);
+}
+
 export function retrieve(question: string, limit = 30): RetrievalResult {
   const q = norm(question);
   const lang = langOf(question);
@@ -82,13 +117,60 @@ export function retrieve(question: string, limit = 30): RetrievalResult {
   const wantsArchived = /\barchived?\b/.test(q);
   const wantsForked = /\b(?:forked|forks|fork)\b/.test(q);
 
-  const flagIntent = wantsArchived || wantsForked || wantsMostStarred || wantsLeastStarred || (wantsForks && lang === null);
+  // NEW v2 intents
+  const depMatch = q.match(/\b(?:depend|depends|dependencies|uses)\b.*\bon\s+([a-z0-9#+.-]{2,40})\b/);
+  const dependOn = depMatch ? depMatch[1] : null;
+  const userIdMatch = q.match(/\b(?:by|from|contributed by)\s+([a-z0-9_-]{2,40})\b/);
+  const contributorId = userIdMatch ? userIdMatch[1] : null;
+  const ofMatch = q.match(/\b(?:contributors? of|who contributed to)\s+([a-z0-9#+.-]{2,40})\b/);
+  const contributorsOfRepo = ofMatch ? ofMatch[1] : null;
+  const similarMatch = q.match(/\b(?:similar|related)\b.*\bto\s+([a-z0-9#+.-]{2,40})\b/);
+  const similarTo = similarMatch ? similarMatch[1] : null;
+  const wantsContributors = /\b(?:contributors?|who contributed)\b/.test(q);
+
+  const flagIntent = wantsArchived || wantsForked || wantsMostStarred || wantsLeastStarred || (wantsForks && lang === null)
+    || dependOn !== null || contributorId !== null || similarTo !== null || wantsContributors || contributorsOfRepo !== null;
   const topic = flagIntent ? null : topicOf(question);
 
   let repos: Node[];
   let label: string;
 
-  if (lang) {
+  if (contributorsOfRepo) {
+    const target = findNodeByName(contributorsOfRepo);
+    const contribs = target ? contributorsOf(target.id) : [];
+    label = contribs.length
+      ? `${contribs.length} contributors to “${contributorsOfRepo}”`
+      : `no contributor data for “${contributorsOfRepo}”`;
+    // return the repo itself as source so the LLM has context; contributors ride in subgraph
+    repos = target && target.type === "repo" ? [target] : [];
+    const subgraph = target ? subgraphAround([target.id], 200) : { nodes: [], edges: [] };
+    return { subgraph, sources: repos, label };
+  } else if (dependOn) {
+    const target = findNodeByName(dependOn);
+    repos = target ? reposDependingOn(target.id) : [];
+    label = repos.length
+      ? `${repos.length} repos depend on “${dependOn}”`
+      : `no repos found that depend on “${dependOn}”`;
+    if (repos.length === 0) {
+      repos = allRepos();
+    }
+  } else if (similarTo) {
+    const seed = findNodeByName(similarTo);
+    if (seed && seed.type === "repo") {
+      repos = jaccardSimilar(allRepos(), seed, limit);
+      label = `${repos.length} repos most similar to “${similarTo}”`;
+    } else {
+      repos = allRepos();
+      label = `could not find “${similarTo}”; showing top-starred`;
+    }
+  } else if (contributorId) {
+    const unode = findNodeByName(`user:${contributorId}`) ?? findNodeByName(contributorId);
+    repos = unode ? reposByContributor(unode.id) : [];
+    label = repos.length
+      ? `${repos.length} repos contributed to by “${contributorId}”`
+      : `no repos found for contributor “${contributorId}”`;
+    if (repos.length === 0) repos = allRepos();
+  } else if (lang) {
     repos = reposWithLanguage(lang);
     label = `${repos.length} repos written in ${lang}`;
   } else if (topic) {
@@ -96,7 +178,6 @@ export function retrieve(question: string, limit = 30): RetrievalResult {
     label = repos.length
       ? `${repos.length} repos about “${topic}”`
       : `no topic match for “${topic}”; showing top-starred fallback`;
-    // topic miss + no flag -> keep all repos so flag filters can still apply
     if (repos.length === 0 && !(wantsArchived || wantsForked)) {
       repos = allRepos();
     }

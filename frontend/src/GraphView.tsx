@@ -26,6 +26,26 @@ function nodeStyle(type: string): Record<string, unknown> {
       label: "data(name)",
     };
   }
+  if (type === "package") {
+    return {
+      shape: "round-rectangle",
+      width: 26,
+      height: 18,
+      "background-color": "#e5666b",
+      label: "data(name)",
+      "font-size": 8,
+    };
+  }
+  if (type === "contributor") {
+    return {
+      shape: "triangle",
+      width: 20,
+      height: 20,
+      "background-color": "#c792ea",
+      label: "data(name)",
+      "font-size": 7,
+    };
+  }
   return {
     shape: "ellipse",
     width: 30,
@@ -99,6 +119,14 @@ export default function GraphView({ subgraph, label }: Props) {
           style: nodeStyle("language"),
         },
         {
+          selector: "node[type = 'package']",
+          style: nodeStyle("package"),
+        },
+        {
+          selector: "node[type = 'contributor']",
+          style: nodeStyle("contributor"),
+        },
+        {
           selector: "edge",
           style: {
             width: 1.5,
@@ -116,6 +144,18 @@ export default function GraphView({ subgraph, label }: Props) {
         {
           selector: "edge[type = 'HAS_LANGUAGE']",
           style: { "line-color": "#3fb68b", "target-arrow-color": "#3fb68b" },
+        },
+        {
+          selector: "edge[type = 'DEPENDS_ON']",
+          style: { "line-color": "#e5666b", "target-arrow-color": "#e5666b", width: 2.5 },
+        },
+        {
+          selector: "edge[type = 'DEPENDS_ON_PKG']",
+          style: { "line-color": "#e5666b", "target-arrow-color": "#e5666b", "line-style": "dashed" },
+        },
+        {
+          selector: "edge[type = 'CONTRIBUTED_BY']",
+          style: { "line-color": "#c792ea", "target-arrow-color": "#c792ea", "line-style": "dotted" },
         },
         {
           selector: "node:selected",

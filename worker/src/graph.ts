@@ -4,7 +4,7 @@ import graphData from "../data/graph.json";
 
 export type Node = {
   id: string;
-  type: "repo" | "language" | "topic";
+  type: "repo" | "language" | "topic" | "package" | "contributor";
   name?: string;
   fullName?: string;
   description?: string;
@@ -18,10 +18,12 @@ export type Node = {
   homepage?: string;
 };
 
+export type EdgeType = "HAS_LANGUAGE" | "HAS_TOPIC" | "DEPENDS_ON" | "DEPENDS_ON_PKG" | "CONTRIBUTED_BY";
+
 export type Edge = {
   source: string;
   target: string;
-  type: "HAS_LANGUAGE" | "HAS_TOPIC";
+  type: EdgeType;
 };
 
 export type Subgraph = {
@@ -84,6 +86,39 @@ export function languageNames(): Map<string, string> {
     }
   }
   return langMapCache;
+}
+
+/** Repos that depend on the given repo/package id (incoming DEPENDS_ON / DEPENDS_ON_PKG). */
+export function reposDependingOn(id: string): Node[] {
+  const ids = (inEdges.get(id) ?? [])
+    .filter((e) => e.type === "DEPENDS_ON" || e.type === "DEPENDS_ON_PKG")
+    .map((e) => e.source);
+  return ids.map((x) => byId.get(x)!).filter(Boolean);
+}
+
+/** Contributors of a repo (outgoing to user nodes), and repos a user contributed to. */
+export function contributorsOf(id: string): Node[] {
+  const ids = (outEdges.get(id) ?? [])
+    .filter((e) => e.type === "CONTRIBUTED_BY")
+    .map((e) => e.target);
+  return ids.map((x) => byId.get(x)!).filter(Boolean);
+}
+
+export function reposByContributor(userId: string): Node[] {
+  const ids = (inEdges.get(userId) ?? [])
+    .filter((e) => e.type === "CONTRIBUTED_BY")
+    .map((e) => e.source);
+  return ids.map((x) => byId.get(x)!).filter(Boolean);
+}
+
+export function findNodeByName(name: string): Node | undefined {
+  const n = name.toLowerCase().replace(/^@/, "").replace("_", "-");
+  const exact = byId.get(n) ?? byId.get(`topic:${n}`) ?? byId.get(`pkg:${n}`) ?? byId.get(`user:${n}`);
+  if (exact) return exact;
+  for (const node of allRepos()) {
+    if (node.id.toLowerCase() === n) return node;
+  }
+  return undefined;
 }
 
 export function reposWithLanguage(lang: string): Node[] {

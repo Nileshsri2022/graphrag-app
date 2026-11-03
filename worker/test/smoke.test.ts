@@ -81,4 +81,20 @@ check("subgraph ≤ 200 nodes", () => {
   }
 });
 
+console.log("\n[4] v2 relationship intents");
+check('"which repos depend on got"', () => {
+  const r = retrieve("which repos depend on got");
+  assert.ok(r.sources.length > 0, `expected deps of got, got 0`);
+  assert.ok(r.sources.some((s) => s.id === "got" || s.id !== ""), "should return repo sources");
+  assert.ok(r.subgraph.nodes.length > 0);
+});
+check('"repos by sindresorhus"', () => {
+  const r = retrieve("repos by sindresorhus");
+  assert.ok(r.sources.length > 0, `expected contributor repos, got 0`);
+});
+check('"similar repos to awesome-nodejs"', () => {
+  const r = retrieve("similar repos to awesome-nodejs");
+  assert.ok(r.sources.length > 0, `expected similar repos, got 0`);
+});
+
 console.log(`\nALL ${passed} CHECKS PASSED\n`);
