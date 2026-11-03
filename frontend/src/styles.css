@@ -71,7 +71,8 @@ body {
   min-height: 32px;
 }
 .btn:hover { border-color: var(--accent); }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* Contrast fix: dark text on the accent button passes WCAG AA (≈6.2:1 vs 3.1:1) */
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #0f1115; font-weight: 600; }
 
 /* ---- layout ---- */
 .main { display: flex; flex: 1; min-height: 0; }

@@ -30,6 +30,11 @@ SPA (GitHub Pages) ──▶ Cloudflare Worker ──▶ in-memory graph + templ
 cd scripts && uv venv .venv && uv pip install --python .venv/Scripts/python.exe openpyxl
 .venv/Scripts/python.exe sync_data.py
 
+> Sync note: `sync_data.py` requires the source spreadsheet at `reports/sindresorhus_repos.xlsx`
+> (not committed — export it from GitHub). It writes `data/graph.json`. The Worker loads its own
+> bundled copy at `worker/data/graph.json`; after re-running sync, copy it over before deploying:
+> `cp data/graph.json ../worker/data/graph.json`
+
 # 2. backend (worker) — requires Node 18+
 cd ../worker && npm install
 npx wrangler dev --port 8787
@@ -63,9 +68,11 @@ npx wrangler secret put LLM_API_KEY
 
 ### 2. SPA → GitHub Pages
 
-Set repo action secret `VITE_API_BASE` (repo → Settings → Secrets and variables → Actions) to your
-worker URL, e.g. `https://graphrag-app.<subdomain>.workers.dev`. Push to `main`; the
+Set repo action **variable** `VITE_API_BASE` (repo → Settings → Secrets and variables → Actions → Variables) to your
+worker URL, e.g. `https://graphrag-app.<subdomain>.workers.dev`. (The workflow reads it via
+`vars.VITE_API_BASE` — it is a public build-time value, not a secret.) Push to `main`; the
 `.github/workflows/deploy-pages.yml` workflow builds and publishes `frontend/dist` to Pages.
+Note the workflow triggers only on `frontend/**` changes or manual dispatch — worker-only changes do not rebuild the SPA.
 
 ## Security notes (from the Security checklist)
 
@@ -83,7 +90,7 @@ worker URL, e.g. `https://graphrag-app.<subdomain>.workers.dev`. Push to `main`;
 |---|---|
 | `top typescript repos` | language filter, sorted by stars |
 | `repos about electron` | topic keyword match → subgraph |
-| `most forked repos` | `isFork` filter, sorted by forks |
+| `most forks` | `isFork` filter, sorted by forks (note: “most forked” filters forks but sorts by stars) |
 | `archived repos` | `archived` filter |
 | `all repos` / `top repos` | all repos sorted by stars |
 
