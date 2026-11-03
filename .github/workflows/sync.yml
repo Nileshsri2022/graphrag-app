@@ -1,0 +1,64 @@
+name: Data sync (cron + manual)
+
+on:
+  schedule:
+    - cron: "0 4 * * *" # daily 04:00 UTC
+  workflow_dispatch: # manual trigger (SPA Re-sync button → /api/resync → dispatch)
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install python deps
+        run: |
+          cd scripts
+          uv venv .venv
+          uv pip install --python .venv/Scripts/python.exe openpyxl
+
+      - name: Regenerate graph via GitHub API
+        run: |
+          cd scripts
+          GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" .venv/Scripts/python.exe sync_data_v2.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Copy snapshot into worker bundle
+        run: cp data/graph.json worker/data/graph.json
+
+      - name: Commit updated snapshot
+        run: |
+          git config user.name "graphrag-sync-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/graph.json worker/data/graph.json
+          if git diff --cached --quiet; then
+            echo "no changes — snapshot is fresh"
+          else
+            git commit -m "chore(data): automatic graph refresh (cron)"
+            git push origin main
+          fi
+
+      - name: Build worker
+        run: |
+          cd worker
+          npm ci
+          npx tsc --noEmit
+          npm test
+
+      - name: Deploy worker
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: |
+          cd worker
+          npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

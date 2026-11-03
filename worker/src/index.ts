@@ -167,13 +167,37 @@ async function handleQuery(request: Request, env: Record<string, string | undefi
   return sse(stream);
 }
 
-/** Re-sync: the worker is a static snapshot; data refresh happens in the repo
- *  (scripts/sync_data_v2.py) and is redeployed. This endpoint reports status. */
-function handleResync(): Response {
-  return json({
-    message: "Re-sync: the API serves a committed snapshot. Run scripts/sync_data_v2.py locally, then redeploy (git push → CI).",
-    meta,
-  });
+/** Re-sync: triggers the GitHub Actions "Data sync" workflow (workflow_dispatch),
+ *  which regenerates graph.json from the GitHub API and redeploys this worker.
+ *  Requires GITHUB_ACTIONS_TOKEN (personal access token) or WORKFLOW_DISPATCH_TOKEN
+ *  secret; without it, returns a helpful message. */
+async function handleResync(env: Record<string, string | undefined>): Promise<Response> {
+  const token = env.GITHUB_ACTIONS_TOKEN ?? env.WORKFLOW_DISPATCH_TOKEN;
+  if (!token) {
+    return json({
+      message: "Re-sync unavailable: no GitHub token configured on the worker. Set GITHUB_ACTIONS_TOKEN (or run sync_data_v2.py locally + redeploy).",
+      meta,
+    });
+  }
+  const owner = env.GITHUB_REPO_OWNER ?? "Nileshsri2022";
+  const repo = env.GITHUB_REPO ?? "graphrag-app";
+  try {
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/workflows/sync.yml/dispatches`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "User-Agent": "graphrag-worker-resync",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ref: "main" }),
+    });
+    if (!res.ok) {
+      return json({ message: `Re-sync trigger failed (${res.status}) — check worker token scopes.`, meta }, 502);
+    }
+    return json({ message: "Re-sync triggered — the data pipeline will rebuild and redeploy in a few minutes.", meta });
+  } catch {
+    return json({ message: "Re-sync trigger error — check worker configuration.", meta }, 502);
+  }
 }
 
 function handleExpand(request: Request): Response {
@@ -207,7 +231,7 @@ export default {
       return handleExpand(request);
     }
     if (url.pathname === "/api/resync" && request.method === "POST") {
-      return handleResync();
+      return handleResync(env);
     }
     return json({ error: "not found" }, 404);
   },
