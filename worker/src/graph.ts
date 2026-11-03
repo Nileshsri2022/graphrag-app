@@ -129,45 +129,47 @@ export function reposWithLanguage(lang: string): Node[] {
 
 /** Build a bounded subgraph around the given repo ids (1-hop). */
 export function subgraphAround(ids: string[], nodeCap = 200): Subgraph {
-  const wanted = new Set<string>(ids);
-  const nodes: Node[] = [];
-  const edges: Edge[] = [];
-  const seenEdges = new Set<string>();
-  const pushEdge = (e: Edge) => {
-    const key = `${e.source}|${e.target}|${e.type}`;
-    if (!seenEdges.has(key)) {
-      seenEdges.add(key);
-      edges.push(e);
-    }
-  };
+  const picked: Node[] = [];
+  const seen = new Set<string>();
+  const pendingEdges: Edge[] = [];
 
   for (const id of ids) {
     const n = byId.get(id);
-    if (!n) continue;
-    nodes.push(n);
+    if (!n || seen.has(id)) continue;
+    seen.add(id);
+    picked.push(n);
     for (const e of outEdges.get(id) ?? []) {
-      pushEdge(e);
-      if (wanted.has(e.target)) continue;
-      if (nodes.length < nodeCap) {
+      pendingEdges.push(e);
+      if (!seen.has(e.target) && picked.length < nodeCap) {
         const t = byId.get(e.target);
         if (t) {
-          nodes.push(t);
-          wanted.add(e.target);
+          seen.add(e.target);
+          picked.push(t);
         }
       }
     }
     for (const e of inEdges.get(id) ?? []) {
-      pushEdge(e);
-      if (!wanted.has(e.source)) {
+      pendingEdges.push(e);
+      if (!seen.has(e.source) && picked.length < nodeCap) {
         const s = byId.get(e.source);
         if (s) {
-          nodes.push(s);
-          wanted.add(e.source);
+          seen.add(e.source);
+          picked.push(s);
         }
       }
     }
   }
-  return { nodes: nodes.slice(0, nodeCap), edges };
+
+  // only keep edges whose endpoints are both actually in the final node set
+  const edges = pendingEdges.filter((e) => seen.has(e.source) && seen.has(e.target));
+  const dedup = new Set<string>();
+  const uniqueEdges = edges.filter((e) => {
+    const key = `${e.source}|${e.target}|${e.type}`;
+    if (dedup.has(key)) return false;
+    dedup.add(key);
+    return true;
+  });
+  return { nodes: picked.slice(0, nodeCap), edges: uniqueEdges };
 }
 
 /** Bounded subgraph from a list of topic/language root ids. */
@@ -183,11 +185,13 @@ export function subgraphFromRoots(roots: string[], nodeCap = 200): Subgraph {
     nodes.push(root);
     for (const e of outEdges.get(r) ?? []) {
       const key = `${e.source}|${e.target}|${e.type}`;
-      if (!seenEdges.has(key)) {
+      const hasTarget = seen.has(e.target);
+      const hasSource = seen.has(e.source);
+      if (hasTarget && hasSource && !seenEdges.has(key)) {
         seenEdges.add(key);
         edges.push(e);
       }
-      if (nodes.length < nodeCap && !seen.has(e.target)) {
+      if (nodes.length < nodeCap && !hasTarget) {
         const t = byId.get(e.target);
         if (t) {
           seen.add(e.target);
@@ -197,11 +201,13 @@ export function subgraphFromRoots(roots: string[], nodeCap = 200): Subgraph {
     }
     for (const e of inEdges.get(r) ?? []) {
       const key = `${e.source}|${e.target}|${e.type}`;
-      if (!seenEdges.has(key)) {
+      const hasTarget = seen.has(e.target);
+      const hasSource = seen.has(e.source);
+      if (hasTarget && hasSource && !seenEdges.has(key)) {
         seenEdges.add(key);
         edges.push(e);
       }
-      if (nodes.length < nodeCap && !seen.has(e.source)) {
+      if (nodes.length < nodeCap && !hasSource) {
         const s = byId.get(e.source);
         if (s) {
           seen.add(e.source);

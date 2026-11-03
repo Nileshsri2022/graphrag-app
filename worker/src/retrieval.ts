@@ -226,3 +226,19 @@ export function formatSources(sources: Node[]): string {
     })
     .join("\n");
 }
+
+export function formatRelationships(sg: Subgraph): string {
+  const lines: string[] = [];
+  for (const e of sg.edges) {
+    if (e.type === "HAS_LANGUAGE" || e.type === "HAS_TOPIC") continue;
+    const s = e.source.replace(/^user:/, "").replace(/^pkg:/, "");
+    const t = e.target.replace(/^user:/, "").replace(/^pkg:/, "");
+    const rel =
+      e.type === "DEPENDS_ON" ? `${s} depends on ${t}`
+      : e.type === "DEPENDS_ON_PKG" ? `${s} depends on package ${t}`
+      : e.type === "CONTRIBUTED_BY" ? `${s} contributed to ${t}`
+      : `${s} --${e.type}--> ${t}`;
+    lines.push(`- ${rel}`);
+  }
+  return lines.slice(0, 120).join("\n");
+}

@@ -196,12 +196,18 @@ export default function GraphView({ subgraph, label }: Props) {
     setLoadingExpand(true);
     try {
       const sg = await fetchExpand(id);
-      cyRef.current.add([
-        ...sg.nodes.map((n) => ({
+      const existingIds = new Set(cyRef.current.nodes().map((n) => n.id()));
+      const nodeEls = sg.nodes
+        .filter((n) => !existingIds.has(n.id))
+        .map((n) => ({
           data: { id: n.id, type: n.type, name: n.name ?? n.fullName ?? n.id, label: n.type === "repo" ? (n.fullName?.split("/")[1] ?? n.id) : n.name, fullName: n.fullName, stars: n.stars, language: n.language, description: n.description, url: n.url },
-        })),
-        ...sg.edges.map((e) => ({ data: { id: `${e.source}->${e.target}`, source: e.source, target: e.target, type: e.type } })),
-      ]);
+        }));
+      // only add edges whose endpoints exist (after adding the new nodes)
+      const allIds = new Set([...existingIds, ...nodeEls.map((e) => e.data.id)]);
+      const edgeEls = sg.edges
+        .filter((e) => allIds.has(e.source) && allIds.has(e.target))
+        .map((e) => ({ data: { id: `${e.source}->${e.target}`, source: e.source, target: e.target, type: e.type } }));
+      cyRef.current.add([...nodeEls, ...edgeEls]);
       cyRef.current.layout({ name: "cose", animate: true, nodeRepulsion: 8000, idealEdgeLength: 80 }).run();
       cyRef.current.fit(undefined, 50);
     } catch (err) {
