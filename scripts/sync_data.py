@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import re
-import string
+from datetime import datetime, timezone
 from pathlib import Path
 
 import openpyxl
@@ -129,7 +129,7 @@ def main() -> None:
             edges.append({"source": repo["id"], "target": topic_id, "type": "HAS_TOPIC"})
 
     meta = {
-        "generatedAt": __import__("datetime").datetime.now().utcnow().isoformat() + "Z",
+        "generatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "source": "sindresorhus_repos.xlsx (GitHub snapshot)",
         "repoCount": len(repos),
         "nodeCount": len(nodes),

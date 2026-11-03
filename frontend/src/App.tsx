@@ -142,7 +142,7 @@ export default function App() {
           API: {health?.ok ? "online" : health ? "offline" : "checking…"} ({API_BASE || "same origin"})
         </span>
         <span>
-          <span className="dot ok" /> 1,148 repos indexed
+          <span className="dot ok" /> {(health?.meta?.repoCount ?? 1148).toLocaleString()} repos indexed
         </span>
         <span style={{ marginLeft: "auto" }}>
           {provider.apiKey ? provider.model : "provider not configured — open Settings"}

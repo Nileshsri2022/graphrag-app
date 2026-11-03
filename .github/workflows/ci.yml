@@ -21,6 +21,8 @@ jobs:
         run: cd worker && npx tsc --noEmit
       - name: npm audit (high+)
         run: cd worker && npm audit --audit-level=high
+      - name: Smoke tests (retrieval gates)
+        run: cd worker && npm test
       - name: wrangler deploy — dry run
         run: cd worker && npx wrangler deploy --dry-run --outdir /tmp/wrangler-dist
 

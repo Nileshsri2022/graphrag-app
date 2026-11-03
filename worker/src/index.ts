@@ -40,6 +40,12 @@ function llmBudget(env: Record<string, string | undefined>): boolean {
 
 function rateLimited(ip: string): boolean {
   const now = Date.now();
+  // bound memory: prune expired buckets when the map grows large
+  if (hits.size > 5000) {
+    for (const [k, v] of hits) {
+      if (v.length === 0 || now - v[v.length - 1] >= WINDOW_MS) hits.delete(k);
+    }
+  }
   const arr = (hits.get(ip) ?? []).filter((t) => now - t < WINDOW_MS);
   hits.set(ip, arr);
   if (arr.length >= MAX_REQ_PER_IP) return true;
