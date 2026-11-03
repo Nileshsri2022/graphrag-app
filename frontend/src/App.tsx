@@ -88,7 +88,6 @@ export default function App() {
         setSubgraph(sg);
         const sources = sg.nodes
           .filter((n) => n.type === "repo" && n.url)
-          .slice(0, 12)
           .map((n) => ({ name: n.fullName ?? n.id, url: n.url! }));
         setMessages((m) => {
           const copy = [...m];
