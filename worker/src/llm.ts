@@ -15,6 +15,30 @@ export function defaultConfig(env: Record<string, string | undefined>): LLMConfi
   };
 }
 
+/** Known OpenAI-compatible provider hosts (BYOK allowlist). */
+const ALLOWED_LLM_HOSTS = new Set([
+  "api.openai.com",
+  "api.openrouter.ai",
+  "api.groq.com",
+  "generativelanguage.googleapis.com",
+  "api.together.xyz",
+  "api.mistral.ai",
+  "api.deepseek.com",
+  "api.x.ai",
+  "api.anthropic.com",
+  "api.moonshot.cn",
+  "openrouter.ai",
+]);
+
+/** BYOK baseUrl is pinned to known providers unless explicitly widened. */
+export function isAllowedProviderHost(url: string): boolean {
+  try {
+    return ALLOWED_LLM_HOSTS.has(new URL(url).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 /** Very light SSRF guard: https only, no loopback/private/metadata hosts.
  *  `allowLocal` is dev-only (mock LLM testing) and never enabled in prod. */
 export function validateBaseUrl(url: string, allowLocal = false): boolean {

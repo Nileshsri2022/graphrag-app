@@ -32,6 +32,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Validate generated graph (schema/size/counts)
+        run: |
+          cd scripts
+          .venv/Scripts/python.exe -c "
+          import json
+          g = json.load(open('../data/graph.json'))
+          m = g['meta']
+          assert m['repoCount'] == 1148, 'repoCount mismatch'
+          assert isinstance(g['nodes'], list) and isinstance(g['edges'], list)
+          ids = {n['id'] for n in g['nodes']}
+          for e in g['edges']:
+              assert e['source'] in ids and e['target'] in ids, f'edge references missing node: {e}'
+              assert '|' not in e['source'] and '|' not in e['target'], 'edge id contains delimiter'
+          assert len(g['nodes']) < 50000 and len(g['edges']) < 100000, 'graph exceeds hard caps'
+          print('graph validation OK:', m['nodeCount'], 'nodes,', m['edgeCount'], 'edges')
+          "
+
       - name: Copy snapshot into worker bundle
         run: cp data/graph.json worker/data/graph.json
 

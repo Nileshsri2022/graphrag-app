@@ -103,6 +103,29 @@ key ships in the bundle (keys live in browser localStorage only).
 - *Data refresh* — rerun `scripts/sync_data.py` to regenerate `data/graph.json`, copy it into
   `worker/data/graph.json`, rebuild, redeploy.
 
+## Security: tokens, trust boundary, runbook (v2)
+
+**Trust boundary:** everything on GitHub Pages is public. The GitHub token lives **only** in
+Actions secrets — never in the worker, SPA, or git history. The worker never holds it.
+The API is the only trusted boundary.
+
+**GitHub token scopes (sync pipeline):** use a classic PAT with **`public_repo` only**
+(no `repo`, no `workflow`, no `gist`, no `read:org`). Set an expiry (≤90 days) and rotate.
+Keep it as the `GH_TOKEN` Actions secret. The worker's re-sync trigger (if used) uses a
+separate narrow, repo-scoped fine-grained token as `GITHUB_ACTIONS_TOKEN` — never the sync PAT.
+
+**Leak runbook:** on suspected token leak → revoke immediately in GitHub → rotate → review
+Actions logs → check GitHub usage/rate-limit page for spikes → audit any graph commits for
+unexpected content.
+
+**LLM key modes:** if `LLM_API_KEY` is set server-side, per-request provider overrides are
+ignored (env-only mode, prevents server-key exfiltration). Without it, BYOK applies: the SPA
+sends its own key, and the base URL is pinned to known providers unless
+`LLM_ALLOW_CUSTOM_HOSTS=1` is set.
+
+**Re-sync button:** gated — requires the shared secret (`RESYNC_KEY` worker secret) sent as
+`x-resync-key`, max 2/hr/IP, single-flight (409 if already running).
+
 ## Intent → query templates (hand-written, per the Karpathy review)
 
 | Example question | Retrieval |

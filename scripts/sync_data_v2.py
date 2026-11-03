@@ -36,6 +36,9 @@ TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
 CONTRIBUTOR_CAP = 10
 PACKAGE_MIN_INBOUND = 3
 THREADS = 8
+MAX_FILE_BYTES = 1_000_000  # package.json size cap (C3)
+MAX_DEPS_PER_REPO = 200
+MAX_TOPICS_PER_REPO = 50
 
 if not TOKEN:
     print("FATAL: GITHUB_TOKEN env var required (GITHUB_TOKEN=$(gh auth token) python sync_data_v2.py)")
@@ -44,7 +47,7 @@ if not TOKEN:
 import openpyxl  # noqa: E402
 
 
-def api(path: str) -> dict | list:
+def api(path: str, max_bytes: int = 5_000_000) -> dict | list:
     req = urllib.request.Request(f"{API}{path}", headers={
         "Authorization": f"Bearer {TOKEN}",
         "Accept": "application/vnd.github+json",
@@ -53,7 +56,14 @@ def api(path: str) -> dict | list:
     for attempt in range(4):
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
-                data = resp.read()
+                # C3: cap response size (size bombs)
+                if int(resp.headers.get("Content-Length", 0) or 0) > max_bytes:
+                    print(f"  oversized response for {path}", flush=True)
+                    return {}
+                data = resp.read(max_bytes + 1)
+                if len(data) > max_bytes:
+                    print(f"  oversized response (read) for {path}", flush=True)
+                    return {}
                 return json.loads(data) if data else {}
         except urllib.error.HTTPError as e:
             if e.code == 403 and attempt < 3:
@@ -67,6 +77,13 @@ def api(path: str) -> dict | list:
         except Exception:  # noqa: BLE001
             time.sleep(2)
     return {}
+
+
+def clean_name(raw: str) -> str:
+    """C3: normalize ids — lowercase, control-char-strip, no '|' nor '->'."""
+    s = "".join(ch for ch in raw if ch.isprintable())
+    s = s.replace("|", "").replace("->", "-")
+    return s.strip().lower()[:80]
 
 
 def read_v1_repos() -> list[dict]:
@@ -100,29 +117,49 @@ def read_v1_repos() -> list[dict]:
 
 def fetch_topics(full_name: str) -> list[str]:
     d = api(f"/repos/{full_name}/topics")
-    return d.get("names", []) if isinstance(d, dict) else []
+    if not isinstance(d, dict):
+        return []
+    out = []
+    for t in d.get("names", [])[:MAX_TOPICS_PER_REPO]:
+        if isinstance(t, str) and t.strip():
+            out.append(clean_name(t))
+    return out
 
 
 def fetch_package_deps(full_name: str) -> list[str]:
-    d = api(f"/repos/{full_name}/contents/package.json")
+    d = api(f"/repos/{full_name}/contents/package.json", max_bytes=MAX_FILE_BYTES)
     if not isinstance(d, dict) or not d.get("content"):
         return []
     try:
         text = base64.b64decode(d["content"]).decode("utf-8", errors="replace")
         pkg = json.loads(text)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — malformed JSON → skip repo
+        return []
+    if not isinstance(pkg, dict):
         return []
     deps = set()
     for section in ("dependencies", "devDependencies"):
-        deps.update((pkg.get(section) or {}).keys())
-    return [name.split("/")[-1].lower().replace("_", "-") for name in deps]
+        sec = pkg.get(section)
+        if isinstance(sec, dict):
+            deps.update(k for k in sec.keys() if isinstance(k, str))
+    out = []
+    for name in deps:
+        if len(out) >= MAX_DEPS_PER_REPO:
+            break
+        out.append(clean_name(name.split("/")[-1]))
+    return out
 
 
 def fetch_contributors(full_name: str) -> list[str]:
     d = api(f"/repos/{full_name}/contributors?per_page={CONTRIBUTOR_CAP}")
     if not isinstance(d, list):
         return []
-    return [c.get("login", "") for c in d if c.get("login")]
+    out = []
+    for c in d:
+        login = c.get("login", "") if isinstance(c, dict) else ""
+        if isinstance(login, str) and login.strip():
+            out.append(clean_name(login))
+    return out
 
 
 def enrich_one(full_name: str) -> dict:
