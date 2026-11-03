@@ -29,7 +29,32 @@ export default function App() {
   const [subgraph, setSubgraph] = useState<Subgraph | null>(null);
   const [graphLabel, setGraphLabel] = useState("");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const answerRef = useRef<Message | null>(null);
+  const historyRef = useRef<{ role: string; content: string }[]>([]);
+
+  const startNewChat = useCallback(() => {
+    historyRef.current = [];
+    answerRef.current = null;
+    setMessages([]);
+    setSubgraph(null);
+    setGraphLabel("");
+  }, []);
+
+  const resync = useCallback(async () => {
+    setSyncing(true);
+    setSyncMsg(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/resync`, { method: "POST" });
+      const data = await res.json();
+      setSyncMsg(data.message ?? (res.ok ? "Sync requested" : `Sync failed (${res.status})`));
+    } catch (err) {
+      setSyncMsg(err instanceof Error ? err.message : "Sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -53,11 +78,25 @@ export default function App() {
     setMessages((m) => [...m, { role: "user", content: question }]);
     setMessages((m) => [...m, { role: "assistant", content: "" }]);
     answerRef.current = null;
+    const hist = historyRef.current;
 
-    await ask(question, provider, {
+    const finalAnswer = await ask(
+      question,
+      provider,
+      {
       onSubgraph: (label, sg) => {
         setGraphLabel(label);
         setSubgraph(sg);
+        const sources = sg.nodes
+          .filter((n) => n.type === "repo" && n.url)
+          .slice(0, 12)
+          .map((n) => ({ name: n.fullName ?? n.id, url: n.url! }));
+        setMessages((m) => {
+          const copy = [...m];
+          const last = copy[copy.length - 1];
+          if (last && last.role === "assistant") copy[copy.length - 1] = { ...last, sources };
+          return copy;
+        });
       },
       onChunk: (chunk) => {
         setMessages((m) => {
@@ -79,8 +118,12 @@ export default function App() {
           return copy;
         });
       },
-    });
+    },
+    hist,
+  );
 
+    // push finished turns into conversation history
+    historyRef.current = [...hist, { role: "user", content: question }, { role: "assistant", content: finalAnswer }].slice(-12);
     setBusy(false);
   }, [input, busy, provider]);
 
@@ -96,6 +139,7 @@ export default function App() {
           {theme === "dark" ? "☀️" : "🌙"}
         </button>
         <button className="btn" onClick={() => setSettingsOpen(true)}>⚙ Settings</button>
+        <button className="btn" onClick={startNewChat} disabled={busy} title="Clear conversation">+ New chat</button>
       </header>
 
       <div className="main">
@@ -112,6 +156,13 @@ export default function App() {
                 {m.content}
                 {busy && i === messages.length - 1 && !m.content && <span className="cursor" />}
                 {m.role === "assistant" && !busy && i === messages.length - 1 && !m.error && answerRef.current && <span className="cursor" />}
+                {m.role === "assistant" && m.sources && m.sources.length > 0 && (
+                  <div className="sources">
+                    {m.sources.map((s, j) => (
+                      <span key={j}><a href={s.url} target="_blank" rel="noreferrer">{s.name}</a> </span>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -156,8 +207,11 @@ export default function App() {
         <span>
           <span className="dot ok" /> {(health?.meta?.repoCount ?? 1148).toLocaleString()} repos indexed
         </span>
+        {syncMsg && <span>{syncMsg}</span>}
         <span style={{ marginLeft: "auto" }}>
-          {provider.apiKey ? provider.model : "provider not configured — open Settings"}
+          <button className="btn" onClick={resync} disabled={syncing}>
+            {syncing ? "Syncing…" : "↻ Re-sync"}
+          </button>
         </span>
       </footer>
 

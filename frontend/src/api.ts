@@ -43,12 +43,12 @@ export async function fetchExpand(id: string): Promise<Subgraph> {
   return data.subgraph;
 }
 
-/** POST /api/query and parse the SSE stream. */
-export async function ask(question: string, provider: ProviderConfig, handlers: QueryEvents): Promise<void> {
+/** POST /api/query and parse the SSE stream. Resolves with the final answer text. */
+export async function ask(question: string, provider: ProviderConfig, handlers: QueryEvents, history: { role: string; content: string }[] = []): Promise<string> {
   const res = await fetch(`${API_BASE}/api/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, provider }),
+    body: JSON.stringify({ question, provider, history }),
   });
 
   if (!res.ok || !res.body) {
@@ -58,13 +58,14 @@ export async function ask(question: string, provider: ProviderConfig, handlers: 
       if (data.error) msg = data.error;
     } catch { /* ignore */ }
     handlers.onError?.(msg);
-    return;
+    return "";
   }
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let event = "";
+  let finalAnswer = "";
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -82,13 +83,16 @@ export async function ask(question: string, provider: ProviderConfig, handlers: 
           const payload = JSON.parse(data);
           if (event === "subgraph") handlers.onSubgraph?.(payload.label ?? "", payload.subgraph);
           else if (event === "answer") handlers.onChunk?.(payload.chunk ?? "");
-          else if (event === "done") handlers.onDone?.(payload.answer ?? "");
-          else if (event === "error") handlers.onError?.(payload.error ?? "LLM error");
+          else if (event === "done") {
+            finalAnswer = payload.answer ?? "";
+            handlers.onDone?.(finalAnswer);
+          } else if (event === "error") handlers.onError?.(payload.error ?? "LLM error");
         } catch { /* skip malformed */ }
         event = "";
       }
     }
   }
+  return finalAnswer;
 }
 
 export const DEFAULT_PROVIDER: ProviderConfig = {

@@ -97,7 +97,7 @@ function buildPrompt(question: string, label: string, sourcesCtx: string, relCtx
 }
 
 async function handleQuery(request: Request, env: Record<string, string | undefined>): Promise<Response> {
-  let body: { question?: unknown; provider?: Partial<LLMConfig> };
+  let body: { question?: unknown; provider?: Partial<LLMConfig>; history?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -109,6 +109,15 @@ async function handleQuery(request: Request, env: Record<string, string | undefi
   const question = body.question.trim();
   if (!question || question.length > 500) {
     return json({ error: "question is required (max 500 chars)" }, 400);
+  }
+  // optional follow-up history: [{role:'user'|'assistant', content:string}] (max 12 turns)
+  let history: { role: string; content: string }[] = [];
+  if (Array.isArray(body.history)) {
+    history = body.history
+      .filter((h): h is { role: string; content: string } =>
+        typeof h === "object" && h !== null && typeof (h as { role?: unknown }).role === "string" && typeof (h as { content?: unknown }).content === "string")
+      .map((h) => ({ role: h.role, content: (h.content as string).slice(0, 500) }))
+      .slice(-12);
   }
 
   const cfg = { ...defaultConfig(env), ...(body.provider ?? {}) };
@@ -143,7 +152,8 @@ async function handleQuery(request: Request, env: Record<string, string | undefi
       };
       try {
         send("subgraph", { label: retrieval.label, subgraph: retrieval.subgraph });
-        const messages = buildPrompt(question, retrieval.label, formatSources(retrieval.sources), formatRelationships(retrieval.subgraph));
+        const baseMessages = buildPrompt(question, retrieval.label, formatSources(retrieval.sources), formatRelationships(retrieval.subgraph));
+        const messages = [...baseMessages, ...history];
         const answer = await chat(cfg, messages, (chunk) => send("answer", { chunk }));
         send("done", { answer });
       } catch (err) {
@@ -155,6 +165,15 @@ async function handleQuery(request: Request, env: Record<string, string | undefi
   });
 
   return sse(stream);
+}
+
+/** Re-sync: the worker is a static snapshot; data refresh happens in the repo
+ *  (scripts/sync_data_v2.py) and is redeployed. This endpoint reports status. */
+function handleResync(): Response {
+  return json({
+    message: "Re-sync: the API serves a committed snapshot. Run scripts/sync_data_v2.py locally, then redeploy (git push → CI).",
+    meta,
+  });
 }
 
 function handleExpand(request: Request): Response {
@@ -186,6 +205,9 @@ export default {
     }
     if (url.pathname === "/api/expand" && request.method === "GET") {
       return handleExpand(request);
+    }
+    if (url.pathname === "/api/resync" && request.method === "POST") {
+      return handleResync();
     }
     return json({ error: "not found" }, 404);
   },

@@ -234,6 +234,19 @@ export default function GraphView({ subgraph, label }: Props) {
       ) : (
         <div className="graph-empty">Subgraph will render here</div>
       )}
+      <div style={{ position: "absolute", top: 44, right: 12, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 10, padding: "8px 12px", fontSize: 11, zIndex: 10, lineHeight: 1.7 }}>
+        <div style={{ fontWeight: 600, marginBottom: 4 }}>Legend</div>
+        <div><span style={{ color: "#6c8cff" }}>●</span> repo</div>
+        <div><span style={{ color: "#e5a94e" }}>◆</span> topic</div>
+        <div><span style={{ color: "#3fb68b" }}>⬢</span> language</div>
+        <div><span style={{ color: "#e5666b" }}>▭</span> package</div>
+        <div><span style={{ color: "#c792ea" }}>▲</span> contributor</div>
+        <div style={{ marginTop: 4, borderTop: "1px dashed var(--border)", paddingTop: 4 }}>
+          <div><span style={{ color: "#e5666b" }}>─</span> depends on</div>
+          <div><span style={{ color: "#e5666b" }}>┅</span> depends on package</div>
+          <div><span style={{ color: "#c792ea" }}>┆</span> contributed by</div>
+        </div>
+      </div>
       {hovered && (
         <div style={{ position: "absolute", bottom: 40, left: 20, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 14px", maxWidth: 320, fontSize: 12, zIndex: 10 }}>
           <strong>{hovered.fullName}</strong>
