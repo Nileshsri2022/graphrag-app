@@ -96,11 +96,11 @@ export function reposDependingOn(id: string): Node[] {
   return ids.map((x) => byId.get(x)!).filter(Boolean);
 }
 
-/** Contributors of a repo (outgoing to user nodes), and repos a user contributed to. */
+/** Contributors of a repo (edges point user -> repo, so sources of in-edges). */
 export function contributorsOf(id: string): Node[] {
-  const ids = (outEdges.get(id) ?? [])
+  const ids = (inEdges.get(id) ?? [])
     .filter((e) => e.type === "CONTRIBUTED_BY")
-    .map((e) => e.target);
+    .map((e) => e.source);
   return ids.map((x) => byId.get(x)!).filter(Boolean);
 }
 
@@ -160,16 +160,19 @@ export function subgraphAround(ids: string[], nodeCap = 200): Subgraph {
     }
   }
 
-  // only keep edges whose endpoints are both actually in the final node set
-  const edges = pendingEdges.filter((e) => seen.has(e.source) && seen.has(e.target));
+  // truncate nodes first; then keep only edges whose endpoints are in the FINAL node set
+  const finalNodes = picked.slice(0, nodeCap);
+  const finalIds = new Set(finalNodes.map((n) => n.id));
   const dedup = new Set<string>();
-  const uniqueEdges = edges.filter((e) => {
+  const edges: Edge[] = [];
+  for (const e of pendingEdges) {
+    if (!finalIds.has(e.source) || !finalIds.has(e.target)) continue;
     const key = `${e.source}|${e.target}|${e.type}`;
-    if (dedup.has(key)) return false;
+    if (dedup.has(key)) continue;
     dedup.add(key);
-    return true;
-  });
-  return { nodes: picked.slice(0, nodeCap), edges: uniqueEdges };
+    edges.push(e);
+  }
+  return { nodes: finalNodes, edges };
 }
 
 /** Bounded subgraph from a list of topic/language root ids. */

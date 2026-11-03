@@ -96,5 +96,10 @@ check('"similar repos to awesome-nodejs"', () => {
   const r = retrieve("similar repos to awesome-nodejs");
   assert.ok(r.sources.length > 0, `expected similar repos, got 0`);
 });
+check('"contributors of type-fest"', () => {
+  const r = retrieve("contributors of type-fest");
+  assert.ok(r.label.startsWith("10 contributors") || r.label.startsWith("9 contributors") || /\d+ contributors/.test(r.label), `unexpected label: ${r.label}`);
+  assert.ok(r.subgraph.edges.filter((e) => e.type === "CONTRIBUTED_BY").length > 0, "expected contributor edges in subgraph");
+});
 
 console.log(`\nALL ${passed} CHECKS PASSED\n`);
