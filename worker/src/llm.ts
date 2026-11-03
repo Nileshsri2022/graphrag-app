@@ -7,6 +7,17 @@ export type LLMConfig = {
   model: string;
 };
 
+/** For item-intent retrievals, pin the item -> listing-repo fact in the prompt
+ *  so answers phrase it as "X is listed inside Y". Returns "" otherwise. */
+export function itemPromptLine(label: string): string {
+  const m = label.match(/^“(.+)” is listed in (.+)$/);
+  if (!m) return "";
+  return (
+    `The question is about a list item named “${m[1]}”, which is listed in: ${m[2]}. ` +
+    `Say it is "listed inside" the repo (e.g. “${m[1]} is listed inside …”).`
+  );
+}
+
 export function defaultConfig(env: Record<string, string | undefined>): LLMConfig {
   return {
     baseUrl: env.LLM_BASE_URL ?? "https://api.openai.com/v1",

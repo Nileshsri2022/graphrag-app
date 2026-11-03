@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -39,6 +40,9 @@ THREADS = 8
 MAX_FILE_BYTES = 1_000_000  # package.json size cap (C3)
 MAX_DEPS_PER_REPO = 200
 MAX_TOPICS_PER_REPO = 50
+MAX_ITEMS_PER_REPO = 400  # cap for awesome-list README entries
+ITEM_TITLE_MAX = 120
+ITEM_URL_MAX = 300
 
 if not TOKEN:
     print("FATAL: GITHUB_TOKEN env var required (GITHUB_TOKEN=$(gh auth token) python sync_data_v2.py)")
@@ -162,12 +166,70 @@ def fetch_contributors(full_name: str) -> list[str]:
     return out
 
 
+def fetch_readme(full_name: str) -> str:
+    """Return README text (or "" if none). Size-capped, UTF-8 clean."""
+    d = api(f"/repos/{full_name}/readme", max_bytes=2_000_000)
+    if not isinstance(d, dict) or not d.get("content"):
+        return ""
+    try:
+        return base64.b64decode(d["content"]).decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def slugify_item(title: str) -> str:
+    s = "".join(ch for ch in title if ch.isprintable())
+    s = s.lower()
+    s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+    return s[:80] or "item"
+
+
+def parse_awesome_entries(md: str) -> list[tuple[str, str]]:
+    """Parse markdown list entries like '- [Title](https://…)' -> (title, url).
+    Deterministic: preserves document order, dedupes by (title, url)."""
+    out: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    # bullet + bracketed link
+    pat = re.compile(r"^\s*[-*]\s+\[([^\]]+)\]\(([^)]+)\)")
+    for line in md.splitlines():
+        m = pat.match(line)
+        if not m:
+            continue
+        title = m.group(1).strip()
+        url = m.group(2).strip()
+        # strip markdown emphasis inside titles
+        title = re.sub(r"[*_`]+", "", title).strip()
+        # enforce https-only urls (skip anchors/relative/junk)
+        if not url.startswith("https://"):
+            continue
+        # clean control chars + caps
+        title = "".join(ch for ch in title if ch.isprintable())[:ITEM_TITLE_MAX]
+        url = "".join(ch for ch in url if ch.isprintable())[:ITEM_URL_MAX]
+        if not title or not url:
+            continue
+        key = (title, url)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+        if len(out) >= MAX_ITEMS_PER_REPO:
+            break
+    return out
+
+
 def enrich_one(full_name: str) -> dict:
-    return {
+    data = {
         "topics": fetch_topics(full_name),
         "deps": fetch_package_deps(full_name),
         "contributors": fetch_contributors(full_name),
+        "items": [],
     }
+    has = full_name.split("/")[-1].lower()
+    if has.startswith("awesome-"):
+        md = fetch_readme(full_name)
+        if md:
+            data["items"] = parse_awesome_entries(md)
+    return data
 
 
 def main() -> None:
@@ -194,7 +256,7 @@ def main() -> None:
                 try:
                     cache[fn] = fut.result()
                 except Exception:  # noqa: BLE001
-                    cache[fn] = {"topics": [], "deps": [], "contributors": []}
+                    cache[fn] = {"topics": [], "deps": [], "contributors": [], "items": []}
                 done += 1
                 if done % 200 == 0:
                     print(f"  … {done}/{len(todo)}", flush=True)
@@ -217,7 +279,7 @@ def main() -> None:
 
     for r in repos:
         add({"id": r["id"], "type": "repo", **r})
-        c = cache.get(r["fullName"], {"topics": [], "deps": [], "contributors": []})
+        c = cache.get(r["fullName"], {"topics": [], "deps": [], "contributors": [], "items": []})
         if r["language"]:
             add({"id": f"lang:{r['language']}", "type": "language", "name": r["language"]})
         for topic in c["topics"]:
@@ -229,6 +291,9 @@ def main() -> None:
                 add({"id": f"pkg:{dep}", "type": "package", "name": dep})
         for contrib in c["contributors"]:
             add({"id": f"user:{contrib}", "type": "contributor", "name": contrib})
+        for title, url in c["items"]:
+            item_id = f"item:{slugify_item(title)}"
+            add({"id": item_id, "type": "item", "name": title, "url": url})
 
     edges: list[dict] = []
     edge_seen: set[str] = set()
@@ -240,7 +305,7 @@ def main() -> None:
             edges.append({"source": s, "target": t, "type": typ})
 
     for r in repos:
-        c = cache.get(r["fullName"], {"topics": [], "deps": [], "contributors": []})
+        c = cache.get(r["fullName"], {"topics": [], "deps": [], "contributors": [], "items": []})
         if r["language"]:
             edge(r["id"], f"lang:{r['language']}", "HAS_LANGUAGE")
         for topic in c["topics"]:
@@ -252,17 +317,21 @@ def main() -> None:
                 edge(r["id"], f"pkg:{dep}", "DEPENDS_ON_PKG")
         for contrib in c["contributors"]:
             edge(f"user:{contrib}", r["id"], "CONTRIBUTED_BY")
+        for title, url in c["items"]:
+            edge(f"item:{slugify_item(title)}", r["id"], "LISTED_IN")
 
     meta = {
         "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "source": "GitHub API v2 enrichment (topics/deps/contributors) + xlsx snapshot",
+        "source": "GitHub API v2 enrichment (topics/deps/contributors/readme-items) + xlsx snapshot",
         "repoCount": len(repos),
         "nodeCount": len(nodes),
         "edgeCount": len(edges),
         "topicCount": sum(1 for n in nodes if n["type"] == "topic"),
         "packageCount": sum(1 for n in nodes if n["type"] == "package"),
         "contributorCount": sum(1 for n in nodes if n["type"] == "contributor"),
+        "itemCount": sum(1 for n in nodes if n["type"] == "item"),
         "depEdgeCount": sum(1 for e in edges if e["type"].startswith("DEPENDS_ON")),
+        "listedInEdgeCount": sum(1 for e in edges if e["type"] == "LISTED_IN"),
     }
     OUT.write_text(json.dumps({"meta": meta, "nodes": nodes, "edges": edges}, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(meta, indent=2))

@@ -4,7 +4,7 @@ import graphData from "../data/graph.json";
 
 export type Node = {
   id: string;
-  type: "repo" | "language" | "topic" | "package" | "contributor";
+  type: "repo" | "language" | "topic" | "package" | "contributor" | "item";
   name?: string;
   fullName?: string;
   description?: string;
@@ -18,7 +18,7 @@ export type Node = {
   homepage?: string;
 };
 
-export type EdgeType = "HAS_LANGUAGE" | "HAS_TOPIC" | "DEPENDS_ON" | "DEPENDS_ON_PKG" | "CONTRIBUTED_BY";
+export type EdgeType = "HAS_LANGUAGE" | "HAS_TOPIC" | "DEPENDS_ON" | "DEPENDS_ON_PKG" | "CONTRIBUTED_BY" | "LISTED_IN";
 
 export type Edge = {
   source: string;
@@ -108,6 +108,22 @@ export function reposByContributor(userId: string): Node[] {
   const ids = (inEdges.get(userId) ?? [])
     .filter((e) => e.type === "CONTRIBUTED_BY")
     .map((e) => e.source);
+  return ids.map((x) => byId.get(x)!).filter(Boolean);
+}
+
+/** Item nodes whose name contains the token (case-insensitive). */
+export function findItemsByName(token: string): Node[] {
+  const t = token.toLowerCase();
+  return NODES.filter(
+    (n) => n.type === "item" && (n.name ?? "").toLowerCase().includes(t),
+  );
+}
+
+/** Repos that list the given item (LISTED_IN edges: item -> repo). */
+export function reposListingItem(itemId: string): Node[] {
+  const ids = EDGES
+    .filter((e) => e.type === "LISTED_IN" && e.source === itemId)
+    .map((e) => e.target);
   return ids.map((x) => byId.get(x)!).filter(Boolean);
 }
 

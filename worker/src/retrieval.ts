@@ -4,10 +4,12 @@
 import {
   allRepos,
   contributorsOf,
+  findItemsByName,
   findNodeByName,
   languageNames,
   reposByContributor,
   reposDependingOn,
+  reposListingItem,
   reposWithLanguage,
   reposWithTopic,
   subgraphAround,
@@ -68,6 +70,46 @@ function topicOf(q: string): string | null {
   const words = nq.split(/\s+/).filter((w) => w.length >= 4 && !STOP.has(w));
   if (words.length === 0) return null;
   return words[words.length - 1];
+}
+
+const WANTS_ITEM = /\bwhat is\b|\bwhat are\b|\babout\b/;
+
+/** Extract the most specific candidate token for an item lookup. */
+function itemTokenFromQuestion(q: string): string | null {
+  const cleaned = q
+    .replace(/\b(?:what|is|are|'s|about|a|an|the|some|any|please|tell|explain|describe|me)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const words = cleaned.split(" ").filter((w) => w.length >= 3 && !STOP.has(w));
+  if (words.length === 0) return null;
+  return [...words].sort((a, b) => b.length - a.length)[0];
+}
+
+/** Item-intent retrieval ("what is X" when no repo/topic/lang/contributor intent hit).
+ *  Returns null on any non-match so existing fallbacks are preserved unchanged. */
+function itemLookup(q: string, limit: number): RetrievalResult | null {
+  if (!WANTS_ITEM.test(q)) return null;
+  const token = itemTokenFromQuestion(q);
+  if (!token) return null;
+  const items = findItemsByName(token);
+  if (items.length === 0) return null;
+  const item = items[0];
+  const repos = reposListingItem(item.id);
+  if (repos.length === 0) return null;
+
+  const itemName = item.name ?? item.id.replace(/^item:/, "");
+  const repoLabels = repos.map((r) => r.fullName ?? r.id);
+  const cap = 60;
+  const nodes = [item, ...repos].slice(0, cap);
+  const idSet = new Set(nodes.map((n) => n.id));
+  const edges = repos
+    .filter((r) => idSet.has(r.id))
+    .map((r) => ({ source: item.id, target: r.id, type: "LISTED_IN" as const }));
+  return {
+    subgraph: { nodes, edges },
+    sources: repos.slice(0, limit),
+    label: `“${itemName}” is listed in ${repoLabels.join(", ")}`,
+  };
 }
 
 function starSort(dir: "desc" | "asc"): (a: Node, b: Node) => number {
@@ -179,9 +221,13 @@ export function retrieve(question: string, limit = 30): RetrievalResult {
       ? `${repos.length} repos about “${topic}”`
       : `no topic match for “${topic}”; showing top-starred fallback`;
     if (repos.length === 0 && !(wantsArchived || wantsForked)) {
+      const itemHit = itemLookup(q, limit);
+      if (itemHit) return itemHit;
       repos = allRepos();
     }
   } else {
+    const itemHit = itemLookup(q, limit);
+    if (itemHit) return itemHit;
     repos = allRepos();
     label = "all repos";
   }
@@ -237,6 +283,7 @@ export function formatRelationships(sg: Subgraph): string {
       e.type === "DEPENDS_ON" ? `${s} depends on ${t}`
       : e.type === "DEPENDS_ON_PKG" ? `${s} depends on package ${t}`
       : e.type === "CONTRIBUTED_BY" ? `${s} contributed to ${t}`
+      : e.type === "LISTED_IN" ? `${s.replace(/^item:/, "")} is listed in ${t}`
       : `${s} --${e.type}--> ${t}`;
     lines.push(`- ${rel}`);
   }
