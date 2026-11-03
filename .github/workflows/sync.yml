@@ -64,6 +64,11 @@ jobs:
             git push origin main
           fi
 
+      - name: Setup Node for wrangler (>=22)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Build worker
         run: |
           cd worker
