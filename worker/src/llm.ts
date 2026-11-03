@@ -28,6 +28,7 @@ const ALLOWED_LLM_HOSTS = new Set([
   "api.anthropic.com",
   "api.moonshot.cn",
   "openrouter.ai",
+  "api.inceptionlabs.ai",
 ]);
 
 /** BYOK baseUrl is pinned to known providers unless explicitly widened. */
