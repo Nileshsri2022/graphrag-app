@@ -102,4 +102,15 @@ check('"contributors of type-fest"', () => {
   assert.ok(r.subgraph.edges.filter((e) => e.type === "CONTRIBUTED_BY").length > 0, "expected contributor edges in subgraph");
 });
 
+console.log("\n[5] v3 README item intents");
+check('"what is babelfish"', () => {
+  const r = retrieve("what is babelfish");
+  assert.ok(r.label.includes("listed in"), `expected item listing label, got: ${r.label}`);
+  assert.ok(r.subgraph.edges.some((e) => e.type === "LISTED_IN"), "expected LISTED_IN edge in subgraph");
+});
+check('"what is babel"', () => {
+  const r = retrieve("what is babel");
+  assert.ok(r.label.includes("listed in"), `expected item listing label, got: ${r.label}`);
+});
+
 console.log(`\nALL ${passed} CHECKS PASSED\n`);

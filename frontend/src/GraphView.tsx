@@ -46,6 +46,18 @@ function nodeStyle(type: string): Record<string, unknown> {
       "font-size": 7,
     };
   }
+  if (type === "item") {
+    return {
+      shape: "round-rectangle",
+      width: 30,
+      height: 16,
+      "background-color": "#8B8296",
+      "border-width": 1,
+      "border-color": "#B9B2C3",
+      label: "data(name)",
+      "font-size": 7,
+    };
+  }
   return {
     shape: "ellipse",
     width: 30,
@@ -128,6 +140,10 @@ export default function GraphView({ subgraph, label }: Props) {
           style: nodeStyle("contributor"),
         },
         {
+          selector: "node[type = 'item']",
+          style: nodeStyle("item"),
+        },
+        {
           selector: "edge",
           style: {
             width: 1.5,
@@ -159,6 +175,10 @@ export default function GraphView({ subgraph, label }: Props) {
           style: { "line-color": "#C792EA", "target-arrow-color": "#C792EA", "line-style": "dotted" },
         },
         {
+          selector: "edge[type = 'LISTED_IN']",
+          style: { "line-color": "#E09A5B", "target-arrow-shape": "none", "line-style": "dashed", opacity: 0.7 },
+        },
+        {
           selector: "node:selected",
           style: { "border-width": 3, "border-color": "#F2EEE7" },
         },
@@ -169,15 +189,15 @@ export default function GraphView({ subgraph, label }: Props) {
     cy.on("tap", "node", (evt) => {
       const node = evt.target;
       const data = node.data();
-      if (data.type === "repo") {
-        setHovered({ fullName: data.fullName, stars: data.stars, language: data.language, description: data.description, url: data.url });
+      if (data.type === "repo" || data.type === "item") {
+        setHovered({ fullName: data.fullName ?? data.name, kind: data.type, stars: data.stars, language: data.language, description: data.description, url: data.url });
       }
     });
 
     cy.on("mouseover", "node", (evt) => {
       const data = evt.target.data();
-      if (data.type === "repo") {
-        setHovered({ fullName: data.fullName, stars: data.stars, language: data.language, description: data.description, url: data.url });
+      if (data.type === "repo" || data.type === "item") {
+        setHovered({ fullName: data.fullName ?? data.name, kind: data.type, stars: data.stars, language: data.language, description: data.description, url: data.url });
       }
     });
 
