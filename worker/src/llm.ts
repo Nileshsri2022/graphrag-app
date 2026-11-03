@@ -28,10 +28,14 @@ export function validateBaseUrl(url: string, allowLocal = false): boolean {
   const host = u.hostname.toLowerCase();
   if (allowLocal) return true; // dev-only: skip host checks (mock LLM on loopback)
   if (host === "localhost" || host.endsWith(".localhost")) return false;
+  if (host.endsWith(".")) return false; // trailing-dot DNS tricks
+  if (host.endsWith(".nip.io") || host.endsWith(".sslip.io") || host.endsWith(".xip.io")) return false;
   if (/^127\.|^10\.|^192\.168\.|^169\.254\.|^0\.|^::1$|^fe80:/.test(host)) return false;
   // 172.16.0.0/12
   const m = host.match(/^172\.(\d+)\./);
   if (m && Number(m[1]) >= 16 && Number(m[1]) <= 31) return false;
+  // all-decimal / IPv4-style hostnames (e.g. 2130706433)
+  if (/^\d+(\.\d+)*$/.test(host)) return false;
   if (host === "169.254.169.254") return false; // cloud metadata
   return true;
 }
@@ -39,6 +43,7 @@ export function validateBaseUrl(url: string, allowLocal = false): boolean {
 export async function chat(config: LLMConfig, messages: { role: string; content: string }[], onChunk?: (text: string) => void): Promise<string> {
   const url = `${config.baseUrl.replace(/\/+$/, "")}/chat/completions`;
   const res = await fetch(url, {
+    signal: AbortSignal.timeout(30_000), // don't hang an SSE connection on a dead upstream
     method: "POST",
     headers: {
       "Content-Type": "application/json",

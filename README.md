@@ -84,6 +84,25 @@ Note the workflow triggers only on `frontend/**` changes or manual dispatch — 
 - Rate limit: 30 req/min per IP (in-memory).
 - Cypher/query injection is moot — retrieval uses fixed template queries over an allowed graph.
 
+## Trust boundary & operations
+
+**Trust boundary:** everything served by GitHub Pages is public static content — assume it is fully
+inspectable. The Cloudflare Worker API is the only trusted boundary: it validates input, guards the
+LLM endpoint, enforces rate limits and a daily LLM budget, and proxies LLM calls so no provider API
+key ships in the bundle (keys live in browser localStorage only).
+
+**Runbook (quick):**
+
+- *LLM key rotation* — user updates it in the SPA Settings (localStorage), or you replace the
+  optional `LLM_API_KEY` secret (`npx wrangler secret put LLM_API_KEY`) for the server-side default.
+- *Abuse / rate-limit hits* — the limiter is 30 req/min per IP; the global LLM budget defaults to
+  200 calls/day (`LLM_DAILY_REQUEST_CAP` env var). The 30/min limiter is in-memory per Worker
+  instance, so it weakens under multi-instance scaling — deploy in one region or move counters to KV.
+- *Rollback* — the worker is stateless; redeploy the previous commit (`git revert` + `wrangler deploy`).
+  The SPA is only the last deployed `dist/` on Pages.
+- *Data refresh* — rerun `scripts/sync_data.py` to regenerate `data/graph.json`, copy it into
+  `worker/data/graph.json`, rebuild, redeploy.
+
 ## Intent → query templates (hand-written, per the Karpathy review)
 
 | Example question | Retrieval |
