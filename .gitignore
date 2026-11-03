@@ -1,0 +1,19 @@
+# data / env
+data/graph.json
+*.env
+.env*
+
+# python
+scripts/.venv/
+__pycache__/
+
+# node
+node_modules/
+dist/
+.wrangler/
+dev-dist/
+
+# editor
+.DS_Store
+.vscode/
+.idea/

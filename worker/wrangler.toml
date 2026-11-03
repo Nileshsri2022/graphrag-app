@@ -1,0 +1,11 @@
+name = "graphrag-app"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+[vars]
+# Default provider (overridable per-request from the SPA settings)
+LLM_BASE_URL = "https://api.openai.com/v1"
+LLM_MODEL = "gpt-4o-mini"
+
+# No secrets here — LLM_API_KEY should be set via `wrangler secret put LLM_API_KEY`
+# (optional; per-request keys from the SPA also work).
