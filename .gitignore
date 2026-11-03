@@ -17,3 +17,4 @@ dev-dist/
 .DS_Store
 .vscode/
 .idea/
+scripts/.v2_cache.json
