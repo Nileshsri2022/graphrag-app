@@ -131,6 +131,18 @@ export default function App() {
               {busy ? <span className="spinner" /> : "Ask ▸"}
             </button>
           </div>
+          {!provider.apiKey && (
+            <div className="setup-card">
+              <div className="setup-icon">🔑</div>
+              <div className="setup-text">
+                <strong>Connect your LLM provider</strong>
+                <span>Set base URL, API key & model to start asking questions.</span>
+              </div>
+              <button className="btn primary" onClick={() => setSettingsOpen(true)}>
+                Configure ▸
+              </button>
+            </div>
+          )}
         </section>
 
         <GraphView subgraph={subgraph} label={graphLabel} />
