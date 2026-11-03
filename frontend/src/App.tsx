@@ -130,7 +130,10 @@ export default function App() {
   return (
     <div className="app">
       <header className="header">
-        <div className="brand">◆ Graph<span>RAG</span></div>
+        <div className="brand">
+          <span className="brand-glyph">◆</span>
+          Graph<span className="g">RAG</span>
+        </div>
         <div className="header-spacer" />
         <div className="model-badge" title={provider.model}>
           {provider.model || "no model configured"}
@@ -146,12 +149,21 @@ export default function App() {
         <section className="chat-panel">
           <div className="messages">
             {messages.length === 0 && (
-              <div style={{ color: "var(--dim)", padding: 8 }}>
-                Ask about sindresorhus's repos — e.g. “top Swift repos”, “repos about terminal”, “most forked”.
+              <div className="chat-empty">
+                <div className="chat-empty-orb">◆</div>
+                <h2>Ask anything about 1,148 repos</h2>
+                <p>Query the sindresorhus knowledge graph — answers stream in, and the retrieved subgraph renders live.</p>
+                <div className="example-chips">
+                  {["which repos depend on execa?", "top Swift repos by stars", "repos about terminals"].map((ex) => (
+                    <button key={ex} className="example-chip" onClick={() => setInput(ex)}>
+                      {ex}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
             {messages.map((m, i) => (
-              <div key={i} className={`msg ${m.role}`}>
+              <div key={i} className={`msg ${m.role}${m.error ? " error" : ""}`}>
                 {m.role === "assistant" && <span className="label">GraphRAG</span>}
                 {m.content}
                 {busy && i === messages.length - 1 && !m.content && <span className="cursor" />}
@@ -159,7 +171,9 @@ export default function App() {
                 {m.role === "assistant" && m.sources && m.sources.length > 0 && (
                   <div className="sources">
                     {m.sources.map((s, j) => (
-                      <span key={j}><a href={s.url} target="_blank" rel="noreferrer">{s.name}</a> </span>
+                      <a key={j} className="src-chip" href={s.url} target="_blank" rel="noreferrer">
+                        {s.name}
+                      </a>
                     ))}
                   </div>
                 )}
@@ -167,20 +181,24 @@ export default function App() {
             ))}
           </div>
           <div className="composer">
-            <textarea
-              value={input}
-              placeholder="Type your question…"
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  send();
-                }
-              }}
-            />
-            <button className="btn primary" onClick={send} disabled={busy || !input.trim()}>
-              {busy ? <span className="spinner" /> : "Ask ▸"}
-            </button>
+            <div className="composer-shell">
+              <textarea
+                value={input}
+                placeholder="Type your question…"
+                aria-label="Your question"
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    send();
+                  }
+                }}
+              />
+              <button className="btn primary btn-send" onClick={send} disabled={busy || !input.trim()}>
+                {busy ? <span className="spinner" /> : "Ask ▸"}
+              </button>
+            </div>
+            <div className="composer-hint">Enter ↵ to send · Shift+Enter for a new line</div>
           </div>
           {!provider.apiKey && (
             <div className="setup-card">
@@ -207,44 +225,65 @@ export default function App() {
         <span>
           <span className="dot ok" /> {(health?.meta?.repoCount ?? 1148).toLocaleString()} repos indexed
         </span>
-        {syncMsg && <span>{syncMsg}</span>}
-        <span style={{ marginLeft: "auto" }}>
+        <span className="status-right">
+          {syncMsg && <span className="sync-msg">{syncMsg}</span>}
           <button className="btn" onClick={resync} disabled={syncing}>
-            {syncing ? "Syncing…" : "↻ Re-sync"}
+            {syncing ? <><span className="spinner" /> Syncing…</> : "↻ Re-sync"}
           </button>
         </span>
       </footer>
 
       {settingsOpen && (
         <div className="overlay" onClick={() => setSettingsOpen(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>LLM Provider (OpenAI-compatible)</h3>
-            <div className="field">
-              <label>Base URL</label>
-              <input
-                value={provider.baseUrl}
-                placeholder="https://api.openai.com/v1"
-                onChange={(e) => setProvider({ ...provider, baseUrl: e.target.value })}
-              />
-              <div className="hint">Any OpenAI-compatible endpoint (OpenAI, OpenRouter, Groq, LM Studio, Ollama…)</div>
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h3 id="settings-title">LLM Provider</h3>
+              <button className="btn icon-btn ghost" aria-label="Close settings" onClick={() => setSettingsOpen(false)}>✕</button>
             </div>
-            <div className="field">
-              <label>API key</label>
-              <input
-                type="password"
-                value={provider.apiKey}
-                placeholder="sk-…"
-                onChange={(e) => setProvider({ ...provider, apiKey: e.target.value })}
-              />
-              <div className="hint">Stored only in this browser (localStorage). Sent to the Worker which proxies the call — never shipped in the static bundle.</div>
-            </div>
-            <div className="field">
-              <label>Model</label>
-              <input
-                value={provider.model}
-                placeholder="gpt-4o-mini / llama-3.1-8b-instant / gemini-2.0-flash"
-                onChange={(e) => setProvider({ ...provider, model: e.target.value })}
-              />
+            <div className="modal-body">
+              <div className="field">
+                <label>Base URL · OpenAI-compatible</label>
+                <input
+                  value={provider.baseUrl}
+                  placeholder="https://api.openai.com/v1"
+                  onChange={(e) => setProvider({ ...provider, baseUrl: e.target.value })}
+                />
+                <div className="preset-row">
+                  {[
+                    { label: "OpenAI", url: "https://api.openai.com/v1", model: "gpt-4o-mini" },
+                    { label: "Groq", url: "https://api.groq.com/openai/v1", model: "llama-3.1-8b-instant" },
+                    { label: "OpenRouter", url: "https://openrouter.ai/api/v1", model: "openai/gpt-4o-mini" },
+                    { label: "Ollama", url: "http://localhost:11434/v1", model: "llama3.1" },
+                  ].map((p) => (
+                    <button
+                      key={p.label}
+                      className="preset-chip"
+                      onClick={() => setProvider({ ...provider, baseUrl: p.url, model: p.model })}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="field">
+                <label>API key</label>
+                <input
+                  type="password"
+                  value={provider.apiKey}
+                  placeholder="sk-…"
+                  autoComplete="off"
+                  onChange={(e) => setProvider({ ...provider, apiKey: e.target.value })}
+                />
+                <div className="hint">Stored only in this browser (localStorage). Sent to the Worker which proxies the call — never shipped in the static bundle.</div>
+              </div>
+              <div className="field">
+                <label>Model</label>
+                <input
+                  value={provider.model}
+                  placeholder="gpt-4o-mini / llama-3.1-8b-instant / gemini-2.0-flash"
+                  onChange={(e) => setProvider({ ...provider, model: e.target.value })}
+                />
+              </div>
             </div>
             <div className="modal-actions">
               <button className="btn" onClick={() => setSettingsOpen(false)}>Cancel</button>

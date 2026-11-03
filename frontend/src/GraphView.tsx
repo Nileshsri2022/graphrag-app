@@ -62,6 +62,7 @@ export default function GraphView({ subgraph, label }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<Core | null>(null);
   const [loadingExpand, setLoadingExpand] = useState(false);
+  const [legendOpen, setLegendOpen] = useState(true);
   const [hovered, setHovered] = useState<{ fullName?: string; stars?: number; language?: string; description?: string; url?: string } | null>(null);
 
   useEffect(() => {
@@ -222,37 +223,64 @@ export default function GraphView({ subgraph, label }: Props) {
       <div className="graph-toolbar">
         <span className="graph-label">{label || "No query yet — ask below"}</span>
         <span className="spacer" />
-        <button className="btn" onClick={() => cyRef.current?.fit(undefined, 50)}>Fit</button>
-        <button className="btn" onClick={() => cyRef.current?.zoom(cyRef.current.zoom() * 1.25)}>+</button>
-        <button className="btn" onClick={() => cyRef.current?.zoom(cyRef.current.zoom() * 0.8)}>−</button>
+        <span className="toolbtn-group">
+          <button className="btn" title="Fit to view" onClick={() => cyRef.current?.fit(undefined, 50)}>Fit</button>
+          <button className="btn" title="Zoom in" onClick={() => cyRef.current?.zoom(cyRef.current.zoom() * 1.25)}>+</button>
+          <button className="btn" title="Zoom out" onClick={() => cyRef.current?.zoom(cyRef.current.zoom() * 0.8)}>−</button>
+        </span>
         <button className="btn" onClick={handleExpand} disabled={loadingExpand}>
-          {loadingExpand ? "…" : "Expand selected"}
+          {loadingExpand ? <span className="spinner" /> : "Expand selected"}
+        </button>
+        <button className="btn" onClick={() => setLegendOpen((v) => !v)} aria-pressed={legendOpen}>
+          Legend
         </button>
       </div>
       {subgraph ? (
         <div ref={containerRef} id="cy" />
       ) : (
-        <div className="graph-empty">Subgraph will render here</div>
-      )}
-      <div style={{ position: "absolute", top: 44, right: 12, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 10, padding: "8px 12px", fontSize: 11, zIndex: 10, lineHeight: 1.7 }}>
-        <div style={{ fontWeight: 600, marginBottom: 4 }}>Legend</div>
-        <div><span style={{ color: "#6c8cff" }}>●</span> repo</div>
-        <div><span style={{ color: "#e5a94e" }}>◆</span> topic</div>
-        <div><span style={{ color: "#3fb68b" }}>⬢</span> language</div>
-        <div><span style={{ color: "#e5666b" }}>▭</span> package</div>
-        <div><span style={{ color: "#c792ea" }}>▲</span> contributor</div>
-        <div style={{ marginTop: 4, borderTop: "1px dashed var(--border)", paddingTop: 4 }}>
-          <div><span style={{ color: "#e5666b" }}>─</span> depends on</div>
-          <div><span style={{ color: "#e5666b" }}>┅</span> depends on package</div>
-          <div><span style={{ color: "#c792ea" }}>┆</span> contributed by</div>
+        <div className="graph-empty">
+          <svg width="180" height="120" viewBox="0 0 180 120" fill="none" aria-hidden="true">
+            <defs>
+              <linearGradient id="eg" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stopColor="var(--accent)" />
+                <stop offset="1" stopColor="var(--accent-deep)" />
+              </linearGradient>
+            </defs>
+            <circle cx="90" cy="48" r="18" fill="url(#eg)" opacity="0.9" />
+            <circle cx="38" cy="84" r="11" fill="var(--g-topic)" opacity="0.85" />
+            <circle cx="146" cy="80" r="13" fill="var(--g-lang)" opacity="0.85" />
+            <path d="M82 40 L46 76" stroke="var(--g-dep)" strokeWidth="1.6" strokeDasharray="3 3" />
+            <path d="M100 42 L136 74" stroke="var(--g-edge)" strokeWidth="1.6" />
+            <text x="90" y="112" textAnchor="middle" fontSize="11" fill="var(--dim)" fontFamily="Inter, sans-serif">
+              Ask a question to load the subgraph
+            </text>
+          </svg>
         </div>
-      </div>
+      )}
+      {legendOpen && (
+        <div className="legend">
+          <h4>Legend</h4>
+          <div className="legend-section">
+            <div className="lg-item"><span className="lg-swatch" style={{ color: "var(--g-repo)" }}>●</span> repo</div>
+            <div className="lg-item"><span className="lg-swatch" style={{ color: "var(--g-topic)" }}>◆</span> topic</div>
+            <div className="lg-item"><span className="lg-swatch" style={{ color: "var(--g-lang)" }}>⬢</span> language</div>
+            <div className="lg-item"><span className="lg-swatch" style={{ color: "var(--g-pkg)" }}>▭</span> package</div>
+            <div className="lg-item"><span className="lg-swatch" style={{ color: "var(--g-contrib)" }}>▲</span> contributor</div>
+          </div>
+          <div className="legend-section edges">
+            <div className="lg-item"><span className="lg-swatch" style={{ color: "var(--g-dep)" }}>─</span> depends on</div>
+            <div className="lg-item"><span className="lg-swatch" style={{ color: "var(--g-dep)" }}>┅</span> depends pkg</div>
+            <div className="lg-item"><span className="lg-swatch" style={{ color: "var(--g-contrib)" }}>┆</span> contributed</div>
+            <div className="lg-item"><span className="lg-swatch" style={{ color: "var(--g-topic)" }}>·</span> topic edge</div>
+          </div>
+        </div>
+      )}
       {hovered && (
-        <div style={{ position: "absolute", bottom: 40, left: 20, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 14px", maxWidth: 320, fontSize: 12, zIndex: 10 }}>
+        <div className="node-tip">
           <strong>{hovered.fullName}</strong>
-          {hovered.stars !== undefined && <div>★ {hovered.stars.toLocaleString()} {hovered.language ? `· ${hovered.language}` : ""}</div>}
-          {hovered.description && <div style={{ color: "var(--dim)", marginTop: 4 }}>{hovered.description.slice(0, 160)}</div>}
-          {hovered.url && <a href={hovered.url} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>Open on GitHub →</a>}
+          {hovered.stars !== undefined && <div className="tip-meta">★ {hovered.stars.toLocaleString()} {hovered.language ? `· ${hovered.language}` : ""}</div>}
+          {hovered.description && <div className="tip-desc">{hovered.description.slice(0, 160)}</div>}
+          {hovered.url && <a className="tip-link" href={hovered.url} target="_blank" rel="noreferrer">Open on GitHub →</a>}
         </div>
       )}
     </div>
