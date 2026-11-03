@@ -31,6 +31,7 @@ export default function App() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [resyncKey, setResyncKey] = useState<string>(() => localStorage.getItem("graphrag.resyncKey") ?? "");
   const answerRef = useRef<Message | null>(null);
   const historyRef = useRef<{ role: string; content: string }[]>([]);
 
@@ -46,7 +47,10 @@ export default function App() {
     setSyncing(true);
     setSyncMsg(null);
     try {
-      const res = await fetch(`${API_BASE}/api/resync`, { method: "POST" });
+      const res = await fetch(`${API_BASE}/api/resync`, {
+        method: "POST",
+        headers: resyncKey ? { "x-resync-key": resyncKey } : {},
+      });
       const data = await res.json();
       setSyncMsg(data.message ?? (res.ok ? "Sync requested" : `Sync failed (${res.status})`));
     } catch (err) {
@@ -54,7 +58,7 @@ export default function App() {
     } finally {
       setSyncing(false);
     }
-  }, []);
+  }, [resyncKey]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -283,6 +287,19 @@ export default function App() {
                   placeholder="gpt-4o-mini / llama-3.1-8b-instant / gemini-2.0-flash"
                   onChange={(e) => setProvider({ ...provider, model: e.target.value })}
                 />
+              </div>
+              <div className="field">
+                <label>Re-sync key (optional)</label>
+                <input
+                  type="password"
+                  value={resyncKey}
+                  placeholder="for the Re-sync button"
+                  onChange={(e) => {
+                    setResyncKey(e.target.value);
+                    localStorage.setItem("graphrag.resyncKey", e.target.value);
+                  }}
+                />
+                <div className="hint">Same value as the worker's RESYNC_KEY secret. Only needed if you want the Re-sync button to trigger a data refresh.</div>
               </div>
             </div>
             <div className="modal-actions">
