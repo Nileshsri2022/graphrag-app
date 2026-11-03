@@ -28,7 +28,6 @@ export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [subgraph, setSubgraph] = useState<Subgraph | null>(null);
   const [graphLabel, setGraphLabel] = useState("");
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [resyncKey, setResyncKey] = useState<string>(() => localStorage.getItem("graphrag.resyncKey") ?? "");
@@ -59,10 +58,6 @@ export default function App() {
       setSyncing(false);
     }
   }, [resyncKey]);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-  }, [theme]);
 
   useEffect(() => {
     fetchHealth()
@@ -142,9 +137,6 @@ export default function App() {
         <div className="model-badge" title={provider.model}>
           {provider.model || "no model configured"}
         </div>
-        <button className="btn" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-          {theme === "dark" ? "☀️" : "🌙"}
-        </button>
         <button className="btn" onClick={() => setSettingsOpen(true)}>⚙ Settings</button>
         <button className="btn" onClick={startNewChat} disabled={busy} title="Clear conversation">+ New chat</button>
       </header>

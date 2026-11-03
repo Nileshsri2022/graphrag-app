@@ -13,7 +13,7 @@ function nodeStyle(type: string): Record<string, unknown> {
       shape: "diamond",
       width: 22,
       height: 22,
-      "background-color": "#e5a94e",
+      "background-color": "#D9B35A",
       label: "data(name)",
     };
   }
@@ -22,7 +22,7 @@ function nodeStyle(type: string): Record<string, unknown> {
       shape: "hexagon",
       width: 24,
       height: 24,
-      "background-color": "#3fb68b",
+      "background-color": "#74B28F",
       label: "data(name)",
     };
   }
@@ -31,7 +31,7 @@ function nodeStyle(type: string): Record<string, unknown> {
       shape: "round-rectangle",
       width: 26,
       height: 18,
-      "background-color": "#e5666b",
+      "background-color": "#E06E78",
       label: "data(name)",
       "font-size": 8,
     };
@@ -41,7 +41,7 @@ function nodeStyle(type: string): Record<string, unknown> {
       shape: "triangle",
       width: 20,
       height: 20,
-      "background-color": "#c792ea",
+      "background-color": "#C792EA",
       label: "data(name)",
       "font-size": 7,
     };
@@ -50,7 +50,7 @@ function nodeStyle(type: string): Record<string, unknown> {
     shape: "ellipse",
     width: 30,
     height: 30,
-    "background-color": "#6c8cff",
+    "background-color": "#7FA6CC",
     label: "data(label)",
     "font-size": 9,
     "text-wrap": "wrap",
@@ -99,12 +99,12 @@ export default function GraphView({ subgraph, label }: Props) {
           selector: "node",
           style: {
             label: "data(label)",
-            color: "#e8ebf0",
+            color: "#F2EEE7",
             "font-family": "Inter, sans-serif",
             "border-width": 1,
-            "border-color": "#262c38",
+            "border-color": "#322D38",
             "text-outline-width": 4,
-            "text-outline-color": "#0f1115",
+            "text-outline-color": "#131116",
           },
         },
         {
@@ -131,8 +131,8 @@ export default function GraphView({ subgraph, label }: Props) {
           selector: "edge",
           style: {
             width: 1.5,
-            "line-color": "#2c3545",
-            "target-arrow-color": "#2c3545",
+            "line-color": "#4A4352",
+            "target-arrow-color": "#4A4352",
             "target-arrow-shape": "triangle",
             "curve-style": "bezier",
             opacity: 0.6,
@@ -140,27 +140,27 @@ export default function GraphView({ subgraph, label }: Props) {
         },
         {
           selector: "edge[type = 'HAS_TOPIC']",
-          style: { "line-color": "#e5a94e", "target-arrow-color": "#e5a94e" },
+          style: { "line-color": "#D9B35A", "target-arrow-color": "#D9B35A" },
         },
         {
           selector: "edge[type = 'HAS_LANGUAGE']",
-          style: { "line-color": "#3fb68b", "target-arrow-color": "#3fb68b" },
+          style: { "line-color": "#74B28F", "target-arrow-color": "#74B28F" },
         },
         {
           selector: "edge[type = 'DEPENDS_ON']",
-          style: { "line-color": "#e5666b", "target-arrow-color": "#e5666b", width: 2.5 },
+          style: { "line-color": "#E06E78", "target-arrow-color": "#E06E78", width: 2.5 },
         },
         {
           selector: "edge[type = 'DEPENDS_ON_PKG']",
-          style: { "line-color": "#e5666b", "target-arrow-color": "#e5666b", "line-style": "dashed" },
+          style: { "line-color": "#E06E78", "target-arrow-color": "#E06E78", "line-style": "dashed" },
         },
         {
           selector: "edge[type = 'CONTRIBUTED_BY']",
-          style: { "line-color": "#c792ea", "target-arrow-color": "#c792ea", "line-style": "dotted" },
+          style: { "line-color": "#C792EA", "target-arrow-color": "#C792EA", "line-style": "dotted" },
         },
         {
           selector: "node:selected",
-          style: { "border-width": 3, "border-color": "#e8ebf0" },
+          style: { "border-width": 3, "border-color": "#F2EEE7" },
         },
       ],
       layout: { name: "cose", animate: false, nodeRepulsion: 8000, idealEdgeLength: 80 },
@@ -236,7 +236,14 @@ export default function GraphView({ subgraph, label }: Props) {
         </button>
       </div>
       {subgraph ? (
-        <div ref={containerRef} id="cy" />
+        <div className="plate-wrap">
+          <span className="plate-corner" />
+          <span className="plate-corner br" />
+          <div ref={containerRef} id="cy" />
+          <div className="plate-caption">
+            {subgraph.nodes.length} nodes · {subgraph.edges.length} edges
+          </div>
+        </div>
       ) : (
         <div className="graph-empty">
           <svg width="180" height="120" viewBox="0 0 180 120" fill="none" aria-hidden="true">
