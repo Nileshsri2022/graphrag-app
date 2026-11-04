@@ -75,7 +75,7 @@ export default function GraphView({ subgraph, label }: Props) {
   const cyRef = useRef<Core | null>(null);
   const [loadingExpand, setLoadingExpand] = useState(false);
   const [legendOpen, setLegendOpen] = useState(true);
-  const [hovered, setHovered] = useState<{ fullName?: string; stars?: number; language?: string; description?: string; url?: string } | null>(null);
+  const [hovered, setHovered] = useState<{ fullName?: string; kind?: string; stars?: number; language?: string; description?: string; url?: string } | null>(null);
 
   useEffect(() => {
     if (!containerRef.current || !subgraph) return;
