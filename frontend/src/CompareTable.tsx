@@ -1,18 +1,5 @@
 import type { GraphNode, Subgraph } from "./api";
-
-function timeAgo(iso?: string): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  const months = Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24 * 30.44));
-  if (months < 1) return "this month";
-  if (months < 12) return `${months}mo ago`;
-  return `${Math.floor(months / 12)}y ago`;
-}
-
-function repoName(n: GraphNode): string {
-  return n.fullName ?? n.id;
-}
+import { repoNameOf, timeAgo } from "./format";
 
 function pickCompareRepos(subgraph: Subgraph, label: string): GraphNode[] {
   const repos = subgraph.nodes.filter((n) => n.type === "repo");
@@ -24,7 +11,7 @@ function pickCompareRepos(subgraph: Subgraph, label: string): GraphNode[] {
       .filter(Boolean);
     if (wanted.length >= 2) {
       const found = wanted
-        .map((w) => repos.find((r) => repoName(r).toLowerCase() === w || r.id.toLowerCase() === w))
+        .map((w) => repos.find((r) => repoNameOf(r).toLowerCase() === w || r.id.toLowerCase() === w))
         .filter((x): x is GraphNode => Boolean(x));
       if (found.length >= 1) return found.slice(0, 2);
     }
@@ -56,12 +43,12 @@ export default function CompareTable({ subgraph, label }: { subgraph: Subgraph; 
           <tbody>
             {repos.map((r) => (
               <tr key={r.id}>
-                <td className="compare-repo">{repoName(r)}</td>
+                <td className="compare-repo">{repoNameOf(r)}</td>
                 <td>{r.stars?.toLocaleString() ?? "—"}</td>
                 <td>{r.forks?.toLocaleString() ?? "—"}</td>
                 <td>{r.language || "—"}</td>
                 <td>{r.archived ? <span className="badge archived">archived</span> : "—"}</td>
-                <td>{timeAgo(r.pushedAt)}</td>
+                <td>{timeAgo(r.pushedAt, "—")}</td>
                 <td>{r.sizeKB?.toLocaleString() ?? "—"}</td>
                 <td>
                   {r.url ? (

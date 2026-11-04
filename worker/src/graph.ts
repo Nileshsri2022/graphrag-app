@@ -111,12 +111,19 @@ export function reposByContributor(userId: string): Node[] {
   return ids.map((x) => byId.get(x)!).filter(Boolean);
 }
 
-/** Item nodes whose name contains the token (case-insensitive). */
+/** Item nodes whose name contains the token (case-insensitive), ranked best-first. */
 export function findItemsByName(token: string): Node[] {
   const t = token.toLowerCase();
-  return NODES.filter(
+  const hits = NODES.filter(
     (n) => n.type === "item" && (n.name ?? "").toLowerCase().includes(t),
   );
+  return hits.sort((a, b) => {
+    const an = (a.name ?? "").toLowerCase();
+    const bn = (b.name ?? "").toLowerCase();
+    const rank = (s: string) => (s === t ? 0 : s.startsWith(t) ? 1 : 2);
+    const d = rank(an) - rank(bn);
+    return d !== 0 ? d : an.length - bn.length;
+  });
 }
 
 /** Repos that list the given item (LISTED_IN edges: item -> repo). */

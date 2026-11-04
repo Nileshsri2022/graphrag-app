@@ -72,17 +72,17 @@ function topicOf(q: string): string | null {
   return words[words.length - 1];
 }
 
-const WANTS_ITEM = /\bwhat is\b|\bwhat are\b|\babout\b/;
+// Item intent fires only on explicit "what is/are X" — NOT on bare "about"
+// (v1 topic phrasing like "repos about terminal" must keep its v1 fallback).
+const WANTS_ITEM = /\bwhat(?:'s| is| are)\s+([a-z0-9#+.-]{3,40})\b/i;
 
-/** Extract the most specific candidate token for an item lookup. */
+/** Extract the candidate token from an explicit "what is X" question. */
 function itemTokenFromQuestion(q: string): string | null {
-  const cleaned = q
-    .replace(/\b(?:what|is|are|'s|about|a|an|the|some|any|please|tell|explain|describe|me)\b/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  const words = cleaned.split(" ").filter((w) => w.length >= 3 && !STOP.has(w));
-  if (words.length === 0) return null;
-  return [...words].sort((a, b) => b.length - a.length)[0];
+  const m = q.match(WANTS_ITEM);
+  if (!m) return null;
+  const token = m[1].toLowerCase().replace(/^@/, "");
+  if (STOP.has(token)) return null;
+  return token;
 }
 
 /** Item-intent retrieval ("what is X" when no repo/topic/lang/contributor intent hit).
