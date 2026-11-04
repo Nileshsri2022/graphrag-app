@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import GraphView from "./GraphView";
+import ResultCards from "./ResultCards";
 import {
   API_BASE,
   ask,
   fetchHealth,
   loadProvider,
   saveProvider,
+  type GraphNode,
   type ProviderConfig,
   type Subgraph,
 } from "./api";
@@ -13,7 +15,7 @@ import {
 type Message = {
   role: "user" | "assistant";
   content: string;
-  sources?: { name: string; url: string }[];
+  sources?: GraphNode[];
   error?: boolean;
 };
 
@@ -86,9 +88,7 @@ export default function App() {
       onSubgraph: (label, sg) => {
         setGraphLabel(label);
         setSubgraph(sg);
-        const sources = sg.nodes
-          .filter((n) => n.type === "repo" && n.url)
-          .map((n) => ({ name: n.fullName ?? n.id, url: n.url! }));
+        const sources = sg.nodes.filter((n) => n.type === "repo" && n.url);
         setMessages((m) => {
           const copy = [...m];
           const last = copy[copy.length - 1];
@@ -164,13 +164,7 @@ export default function App() {
                 {busy && i === messages.length - 1 && !m.content && <span className="cursor" />}
                 {m.role === "assistant" && !busy && i === messages.length - 1 && !m.error && answerRef.current && <span className="cursor" />}
                 {m.role === "assistant" && m.sources && m.sources.length > 0 && (
-                  <div className="sources">
-                    {m.sources.map((s, j) => (
-                      <a key={j} className="src-chip" href={s.url} target="_blank" rel="noreferrer">
-                        {s.name}
-                      </a>
-                    ))}
-                  </div>
+                  <ResultCards repos={m.sources} />
                 )}
               </div>
             ))}

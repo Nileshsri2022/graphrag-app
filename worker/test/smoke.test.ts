@@ -102,6 +102,23 @@ check('"contributors of type-fest"', () => {
   assert.ok(r.subgraph.edges.filter((e) => e.type === "CONTRIBUTED_BY").length > 0, "expected contributor edges in subgraph");
 });
 
+console.log("\n[4b] P0 best/alternatives/compare intents");
+check('"best packages for terminal"', () => {
+  const r = retrieve("best packages for terminal");
+  assert.ok(r.sources.length > 0, `expected best-repos, got 0`);
+  assert.ok(r.label.startsWith("Top"), `expected Top label, got: ${r.label}`);
+});
+check('"alternatives to execa"', () => {
+  const r = retrieve("alternatives to execa");
+  assert.ok(r.sources.length > 0, `expected alternatives, got 0`);
+  assert.ok(r.sources.every((s) => s.id !== "execa"), "alternatives should exclude the seed repo");
+});
+check('"compare got vs ky"', () => {
+  const r = retrieve("compare got vs ky");
+  assert.ok(r.label.startsWith("compare:"), `expected compare label, got: ${r.label}`);
+  assert.ok(r.sources.length >= 2, `expected 2 compare sources, got ${r.sources.length}`);
+});
+
 console.log("\n[5] v3 README item intents");
 check('"what is babelfish"', () => {
   const r = retrieve("what is babelfish");

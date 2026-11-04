@@ -159,6 +159,50 @@ export function retrieve(question: string, limit = 30): RetrievalResult {
   const wantsArchived = /\barchived?\b/.test(q);
   const wantsForked = /\b(?:forked|forks|fork)\b/.test(q);
 
+  // P0: compare / best-for / alternatives intents
+  const compareMatch = q.match(/^compare\s+(.+?)\s+(?:and|vs\.?|with)\s+(.+)$/);
+  const bestMatch = q.match(/\bbest\b(?:\s+\w+){0,4}\s+for\s+(.+)$/) ?? q.match(/\bbest\b\s+(.+)$/);
+  const altMatch = q.match(/\balternatives?\b\s+to\s+(.+)$/);
+
+  if (compareMatch) {
+    const a = findNodeByName(compareMatch[1].trim());
+    const b = findNodeByName(compareMatch[2].trim());
+    if (a && b && a.type === "repo" && b.type === "repo") {
+      const sg = subgraphAround([a.id, b.id], 120);
+      return {
+        subgraph: sg,
+        sources: [a, b],
+        label: `compare:${a.fullName}|${b.fullName}`,
+      };
+    }
+  }
+
+  if (bestMatch) {
+    const subject = bestMatch[1].trim();
+    let repos = reposWithTopic(subject);
+    const lang = langOf(subject);
+    if (repos.length === 0 && lang) repos = reposWithLanguage(lang);
+    if (repos.length === 0) repos = allRepos();
+    const top = [...repos].sort(starSort("desc")).slice(0, 10);
+    return {
+      subgraph: subgraphAround(top.map((r) => r.id), 150),
+      sources: top,
+      label: `Top ${top.length} repos for “${subject}”`,
+    };
+  }
+
+  if (altMatch) {
+    const seed = findNodeByName(altMatch[1].trim());
+    if (seed && seed.type === "repo") {
+      const alts = jaccardSimilar(allRepos(), seed, 10);
+      return {
+        subgraph: subgraphAround(alts.map((r) => r.id), 150),
+        sources: alts,
+        label: `${alts.length} alternatives to “${seed.id}”`,
+      };
+    }
+  }
+
   // NEW v2 intents
   const depMatch = q.match(/\b(?:depend|depends|dependencies|uses)\b.*\bon\s+([a-z0-9#+.-]{2,40})\b/);
   const dependOn = depMatch ? depMatch[1] : null;
@@ -171,7 +215,8 @@ export function retrieve(question: string, limit = 30): RetrievalResult {
   const wantsContributors = /\b(?:contributors?|who contributed)\b/.test(q);
 
   const flagIntent = wantsArchived || wantsForked || wantsMostStarred || wantsLeastStarred || (wantsForks && lang === null)
-    || dependOn !== null || contributorId !== null || similarTo !== null || wantsContributors || contributorsOfRepo !== null;
+    || dependOn !== null || contributorId !== null || similarTo !== null || wantsContributors || contributorsOfRepo !== null
+    || bestMatch !== null || altMatch !== null;
   const topic = flagIntent ? null : topicOf(question);
 
   let repos: Node[];

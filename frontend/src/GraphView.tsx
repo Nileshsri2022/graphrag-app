@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import cytoscape, { type Core, type ElementDefinition } from "cytoscape";
 import { fetchExpand, type Subgraph } from "./api";
+import CompareTable from "./CompareTable";
 
 type Props = {
   subgraph: Subgraph | null;
@@ -240,6 +241,9 @@ export default function GraphView({ subgraph, label }: Props) {
 
   return (
     <div className="graph-panel">
+      {label.startsWith("compare:") && subgraph && (
+        <CompareTable subgraph={subgraph} label={label} />
+      )}
       <div className="graph-toolbar">
         <span className="graph-label">{label || "No query yet — ask below"}</span>
         <span className="spacer" />

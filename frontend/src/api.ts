@@ -6,16 +6,22 @@ export type ProviderConfig = {
 
 export type GraphNode = {
   id: string;
-  type: "repo" | "language" | "topic";
+  type: "repo" | "language" | "topic" | "contributor" | "package" | "item";
   name?: string;
   fullName?: string;
   description?: string;
   language?: string;
   stars?: number;
   forks?: number;
+  openIssues?: number;
+  sizeKB?: number;
   archived?: boolean;
   isFork?: boolean;
   url?: string;
+  homepage?: string;
+  pushedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type GraphEdge = { source: string; target: string; type: string };
