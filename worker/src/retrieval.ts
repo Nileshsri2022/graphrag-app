@@ -457,7 +457,18 @@ export function answerCards(
     );
   const rest = all.filter((n) => !(n.type === "item" && matchesQuery(n))).sort(compareRanked);
   const picked = [...itemsFirst, ...rest].slice(0, Math.max(1, Math.min(limit, 50)));
-  return { label: ret.label, cards: picked.map((n, i) => toCard(n, i + 1, matchTerms)) };
+  // The retrieve() label counts only the template repos ("Top 5 repos for ...")
+  // but the cards also include TF-IDF/item hits, so the number in the label
+  // can disagree with the number of cards shown (browser defect: heading
+  // said "Top 5 repos" while 8 tools were listed). Rewrite the count to the
+  // actual number of cards returned, and say "tools" (the cards are mostly
+  // items) to match the frontend's count badge.
+  let label = ret.label;
+  const topMatch = /^Top \d+ repos for “(.+)”$/.exec(label);
+  if (topMatch) {
+    label = `Top ${picked.length} tools for “${topMatch[1]}”`;
+  }
+  return { label, cards: picked.map((n, i) => toCard(n, i + 1, matchTerms)) };
 }
 
 /** Trending: top items + repos by compareRanked (rating, stars, recency). */

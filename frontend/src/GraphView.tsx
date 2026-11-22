@@ -86,10 +86,15 @@ export default function GraphView({ subgraph, label }: Props) {
   const cyRef = useRef<Core | null>(null);
   const [loadingExpand, setLoadingExpand] = useState(false);
   const [legendOpen, setLegendOpen] = useState(true);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [expandNote, setExpandNote] = useState<string | null>(null);
   const [hovered, setHovered] = useState<{ fullName?: string; kind?: string; stars?: number; language?: string; description?: string; url?: string } | null>(null);
 
   useEffect(() => {
     if (!containerRef.current || !subgraph) return;
+    // A new subgraph means a fresh canvas: clear selection + expand feedback.
+    setSelectedId(null);
+    setExpandNote(null);
     const elements: ElementDefinition[] = [
       ...subgraph.nodes.map((n) => ({
         data: {
@@ -128,6 +133,12 @@ export default function GraphView({ subgraph, label }: Props) {
             "border-color": "#424936",
             "text-outline-width": 4,
             "text-outline-color": "#080b10",
+            // Labels sit BELOW the node shape (centred). The previous
+            // default centred the label on the node, so the text overlapped
+            // the top edge of small node shapes (list/item nodes).
+            "text-valign": "bottom",
+            "text-halign": "center",
+            "text-margin-y": 3,
           },
         },
         {
@@ -216,6 +227,11 @@ export default function GraphView({ subgraph, label }: Props) {
       }
     });
 
+    // Track selection so "Expand selected" can be disabled when nothing is
+    // selected (previously it silently did nothing, which looked broken).
+    cy.on("select", "node", (evt) => setSelectedId(evt.target.id()));
+    cy.on("unselect", "node", () => setSelectedId(null));
+
     cyRef.current = cy;
     cy.fit(undefined, 50);
     return () => {
@@ -230,6 +246,7 @@ export default function GraphView({ subgraph, label }: Props) {
     if (sel.length === 0) return;
     const id = sel[0].id();
     setLoadingExpand(true);
+    setExpandNote(null);
     try {
       const sg = await fetchExpand(id);
       const existingIds = new Set(cyRef.current.nodes().map((n) => n.id()));
@@ -243,11 +260,21 @@ export default function GraphView({ subgraph, label }: Props) {
       const edgeEls = sg.edges
         .filter((e) => allIds.has(e.source) && allIds.has(e.target))
         .map((e) => ({ data: { id: `${e.source}->${e.target}`, source: e.source, target: e.target, type: e.type } }));
-      cyRef.current.add([...nodeEls, ...edgeEls]);
+      // Dedupe edges already on the canvas so re-expanding a node does not
+      // stack duplicate edges.
+      const existingEdgeIds = new Set(cyRef.current.edges().map((e) => e.id()));
+      const newEdgeEls = edgeEls.filter((e) => !existingEdgeIds.has(e.data.id));
+      const added = nodeEls.length + newEdgeEls.length;
+      if (added === 0) {
+        setExpandNote("No new neighbours for this node.");
+        return;
+      }
+      cyRef.current.add([...nodeEls, ...newEdgeEls]);
       cyRef.current.layout({ name: "cose", animate: true, nodeRepulsion: 8000, idealEdgeLength: 80 }).run();
       cyRef.current.fit(undefined, 50);
     } catch (err) {
       console.error(err);
+      setExpandNote("Expand failed — try again.");
     } finally {
       setLoadingExpand(false);
     }
@@ -266,13 +293,19 @@ export default function GraphView({ subgraph, label }: Props) {
           <button className="btn" title="Zoom in" onClick={() => cyRef.current?.zoom(cyRef.current.zoom() * 1.25)}>+</button>
           <button className="btn" title="Zoom out" onClick={() => cyRef.current?.zoom(cyRef.current.zoom() * 0.8)}>−</button>
         </span>
-        <button className="btn" onClick={handleExpand} disabled={loadingExpand}>
+        <button
+          className="btn"
+          onClick={handleExpand}
+          disabled={loadingExpand || selectedId === null}
+          title={selectedId === null ? "Select a node first" : "Expand the selected node"}
+        >
           {loadingExpand ? <span className="spinner" /> : "Expand selected"}
         </button>
         <button className="btn" onClick={() => setLegendOpen((v) => !v)} aria-pressed={legendOpen}>
           Legend
         </button>
       </div>
+      {expandNote && <div className="expand-note" role="status">{expandNote}</div>}
       {subgraph ? (
         <div className="plate-wrap">
           <span className="plate-corner" />

@@ -219,9 +219,18 @@ export function timeAgo(dateStr: string, now = Date.now()): string {
  */
 export function buildWhyText(node: Node, terms: string[]): string {
   const parts: string[] = [];
-  const hay = `${node.name ?? ""} ${node.description ?? ""}`.toLowerCase();
-  const hit = terms.find((t) => t.length >= 2 && hay.includes(t));
-  if (hit) parts.push(`Matches '${hit}'`);
+  // Where each query term matched — name matches are stronger than
+  // description matches, and the location differs per card, so the "why"
+  // text distinguishes results that share the same rating/freshness
+  // (browser defect: all 8 cards showed the identical
+  // "Matches 'python' · updated 5d ago"). Terms already matched in the
+  // name are not repeated for the description.
+  const nameHay = (node.name ?? "").toLowerCase();
+  const descHay = (node.description ?? "").toLowerCase();
+  const nameHits = terms.filter((t) => t.length >= 2 && nameHay.includes(t));
+  const descHits = terms.filter((t) => t.length >= 2 && !nameHay.includes(t) && descHay.includes(t));
+  if (nameHits.length > 0) parts.push(`Matches ${nameHits.map((t) => `'${t}'`).join(", ")} in name`);
+  if (descHits.length > 0) parts.push(`Matches ${descHits.map((t) => `'${t}'`).join(", ")} in description`);
   if (node.language) parts.push(node.language);
   if (typeof node.stars === "number") parts.push(`★${formatStars(node.stars)}`);
   const last = node.lastActivity ?? node.pushedAt;
