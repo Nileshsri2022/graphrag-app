@@ -16,6 +16,18 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Restore awesome-list fetch cache
+        uses: actions/cache@v4
+        with:
+          # Unique key per run so the updated cache is saved back; the
+          # restore-key prefix pulls the newest previous run's cache.
+          # The cache holds list READMEs + metadata (scripts/.awesome_cache.json);
+          # entries older than 7 days are refetched by sync_awesome.py.
+          path: scripts/.awesome_cache.json
+          key: awesome-cache-v1-${{ github.run_id }}
+          restore-keys: |
+            awesome-cache-v1-
+
       - name: Setup uv
         uses: astral-sh/setup-uv@v5
 
@@ -23,40 +35,75 @@ jobs:
         run: |
           cd scripts
           uv venv .venv
-          uv pip install --python .venv/Scripts/python.exe openpyxl
+          uv pip install --python .venv/bin/python openpyxl
 
       - name: Regenerate graph via GitHub API
         run: |
           cd scripts
-          GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" .venv/Scripts/python.exe sync_data_v2.py
+          GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" .venv/bin/python sync_data_v2.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download awesome README (knowledge-base source)
+        run: |
+          cd scripts
+          curl -sSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.raw" \
+            https://api.github.com/repos/Nileshsri2022/awesome/readme \
+            -o awesome-readme.md
+          test -s awesome-readme.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build awesome layer (lists + items)
+        run: |
+          cd scripts
+          GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" .venv/bin/python sync_awesome.py \
+            --readme awesome-readme.md --full
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build TF-IDF search index
+        run: |
+          cd scripts
+          .venv/bin/python build_search_index.py ../data/graph.json \
+            --out ../worker/data/search.json
 
       - name: Validate generated graph (schema/size/counts)
         run: |
           cd scripts
-          .venv/Scripts/python.exe -c "
-          import json
+          .venv/bin/python -c "
+          import json, os
           g = json.load(open('../data/graph.json'))
           m = g['meta']
-          assert m['repoCount'] == 1148, 'repoCount mismatch'
-          assert isinstance(g['nodes'], list) and isinstance(g['edges'], list)
+          assert m['repoCount'] > 0, 'repoCount is 0'
+          assert m.get('listCount', 0) > 0, 'listCount is 0 — awesome layer missing'
+          assert len(g['nodes']) < 50000 and len(g['edges']) < 100000, 'graph exceeds hard caps'
+          assert m['nodeCount'] == len(g['nodes']), 'nodeCount mismatch'
+          assert m['edgeCount'] == len(g['edges']), 'edgeCount mismatch'
           ids = {n['id'] for n in g['nodes']}
           for e in g['edges']:
               assert e['source'] in ids and e['target'] in ids, f'edge references missing node: {e}'
               assert '|' not in e['source'] and '|' not in e['target'], 'edge id contains delimiter'
-          assert len(g['nodes']) < 50000 and len(g['edges']) < 100000, 'graph exceeds hard caps'
-          print('graph validation OK:', m['nodeCount'], 'nodes,', m['edgeCount'], 'edges')
+          size = os.path.getsize('../worker/data/search.json')
+          assert size <= 500 * 1024, f'search.json exceeds 500 KB: {size} bytes'
+          print('graph validation OK:', m['nodeCount'], 'nodes,', m['edgeCount'], 'edges,',
+                m['listCount'], 'lists,', m.get('skippedLists'), 'skipped,',
+                'search.json', size, 'bytes')
           "
 
       - name: Copy snapshot into worker bundle
-        run: cp data/graph.json worker/data/graph.json
+        # graph.json is copied in; search.json was already written straight
+        # into worker/data/ by the "Build TF-IDF search index" step.
+        run: |
+          cp data/graph.json worker/data/graph.json
+          ls -la worker/data/
 
       - name: Commit updated snapshot
         run: |
           git config user.name "graphrag-sync-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add data/graph.json worker/data/graph.json
+          git add data/graph.json worker/data/graph.json worker/data/search.json
           if git diff --cached --quiet; then
             echo "no changes — snapshot is fresh"
           else
