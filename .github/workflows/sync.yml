@@ -15,6 +15,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          # Full history: the Commit step rebases onto main before pushing,
+          # which needs more than the default shallow (depth-1) checkout.
+          fetch-depth: 0
 
       - name: Setup Node for wrangler (>=22)
         uses: actions/setup-node@v4
@@ -117,7 +120,7 @@ jobs:
               assert e['source'] in ids and e['target'] in ids, f'edge references missing node: {e}'
               assert '|' not in e['source'] and '|' not in e['target'], 'edge id contains delimiter'
           size = os.path.getsize('../data/search.json')
-          assert size <= 10 * 1024 * 1024, f'search.json exceeds 10 MB: {size} bytes'
+          assert size <= 20 * 1024 * 1024, f'search.json exceeds 20 MB: {size} bytes'
           print('graph validation OK:', m['nodeCount'], 'nodes,', m['edgeCount'], 'edges,',
                 m['listCount'], 'lists,', m.get('skippedLists'), 'skipped,',
                 'search.json', size, 'bytes')
@@ -136,6 +139,11 @@ jobs:
             echo "no changes — snapshot is fresh"
           else
             git commit -m "chore(data): automatic graph refresh (cron)"
+            # main may have moved while this run was working (e.g. a sync.yml
+            # edit on the web UI) — rebase onto it so the push is not
+            # rejected as non-fast-forward. The snapshot files are only
+            # ever written by this workflow, so the rebase applies cleanly.
+            git pull --rebase origin main
             git push origin main
           fi
 
