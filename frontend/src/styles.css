@@ -879,6 +879,13 @@ a.card-name:hover { color: var(--accent-bright); }
 }
 .graph-label { font-size: var(--fs-12); color: var(--dim); font-family: var(--mono); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .graph-toolbar .spacer { flex: 1; }
+.expand-note {
+  padding: 6px 14px;
+  font-size: var(--fs-12);
+  color: var(--dim);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
 .toolbtn-group { display: inline-flex; background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--r-sm); overflow: hidden; }
 .toolbtn-group .btn { border: none; border-radius: 0; background: transparent; min-height: 30px; padding: 4px 10px; }
 .toolbtn-group .btn + .btn { border-left: 1px solid var(--border); }

@@ -269,8 +269,19 @@ export async function ensureSectionsForQuery(env: unknown, question: string): Pr
  * Load the shard(s) containing a node, for /api/expand. A list loads its
  * own section; an item loads the sections its name tokens route to; any
  * other node type needs only the skeleton (already loaded).
+ *
+ * An item node is NOT in the skeleton (items live only in shards), so
+ * looking it up first (getNode) fails on a fresh isolate and the expand
+ * returns empty — the chicken-and-egg that made /api/expand return
+ * 0 nodes for item ids. For item ids, route by the name in the id
+ * itself (item:<name>) without needing the node loaded first.
  */
 export async function ensureSectionsForNode(env: unknown, nodeId: string): Promise<string[]> {
+  if (nodeId.startsWith("item:")) {
+    const name = nodeId.slice("item:".length);
+    if (name) return ensureSectionsForQuery(env, name);
+    return [];
+  }
   const node = getNode(nodeId);
   if (!node) return [];
   if (node.type === "list") {

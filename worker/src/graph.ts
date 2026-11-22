@@ -476,23 +476,16 @@ export function subgraphAround(ids: string[], nodeCap = 200): Subgraph {
 /** Bounded subgraph from a list of topic/language root ids. */
 export function subgraphFromRoots(roots: string[], nodeCap = 200): Subgraph {
   const nodes: Node[] = [];
-  const edges: Edge[] = [];
+  const pendingEdges: Edge[] = [];
   const seen = new Set<string>();
-  const seenEdges = new Set<string>();
   for (const r of roots) {
     const root = byId.get(r);
     if (!root || seen.has(r)) continue;
     seen.add(r);
     nodes.push(root);
     for (const e of outEdges.get(r) ?? []) {
-      const key = `${e.source}|${e.target}|${e.type}`;
-      const hasTarget = seen.has(e.target);
-      const hasSource = seen.has(e.source);
-      if (hasTarget && hasSource && !seenEdges.has(key)) {
-        seenEdges.add(key);
-        edges.push(e);
-      }
-      if (nodes.length < nodeCap && !hasTarget) {
+      pendingEdges.push(e);
+      if (nodes.length < nodeCap && !seen.has(e.target)) {
         const t = byId.get(e.target);
         if (t) {
           seen.add(e.target);
@@ -501,14 +494,8 @@ export function subgraphFromRoots(roots: string[], nodeCap = 200): Subgraph {
       }
     }
     for (const e of inEdges.get(r) ?? []) {
-      const key = `${e.source}|${e.target}|${e.type}`;
-      const hasTarget = seen.has(e.target);
-      const hasSource = seen.has(e.source);
-      if (hasTarget && hasSource && !seenEdges.has(key)) {
-        seenEdges.add(key);
-        edges.push(e);
-      }
-      if (nodes.length < nodeCap && !hasSource) {
+      pendingEdges.push(e);
+      if (nodes.length < nodeCap && !seen.has(e.source)) {
         const s = byId.get(e.source);
         if (s) {
           seen.add(e.source);
@@ -517,5 +504,22 @@ export function subgraphFromRoots(roots: string[], nodeCap = 200): Subgraph {
       }
     }
   }
-  return { nodes, edges };
+  // Truncate nodes first; then keep only edges whose endpoints are in the
+  // FINAL node set. (Previously edges were kept only when both endpoints
+  // were already seen at the moment the edge was processed — but neighbour
+  // nodes are added after their edges are processed, so every 1-hop edge
+  // from a root to a newly discovered neighbour was dropped. That is why
+  // /api/expand returned nodes with 0 edges.)
+  const finalNodes = nodes.slice(0, nodeCap);
+  const finalIds = new Set(finalNodes.map((n) => n.id));
+  const seenEdges = new Set<string>();
+  const edges: Edge[] = [];
+  for (const e of pendingEdges) {
+    if (!finalIds.has(e.source) || !finalIds.has(e.target)) continue;
+    const key = `${e.source}|${e.target}|${e.type}`;
+    if (seenEdges.has(key)) continue;
+    seenEdges.add(key);
+    edges.push(e);
+  }
+  return { nodes: finalNodes, edges };
 }

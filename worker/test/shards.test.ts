@@ -9,6 +9,7 @@ import {
   dataStatus,
   ensureData,
   ensureSections,
+  ensureSectionsForNode,
   ensureSectionsForQuery,
   getCatalog,
   getTermmap,
@@ -26,8 +27,9 @@ import {
   loadGraphData,
   meta,
   sectionsWithCounts,
+  subgraphFromRoots,
 } from "../src/graph";
-import { isTfidfEnabled, tfidfSearch, tfidfSearchSharded } from "../src/tfidf";
+import { buildWhyText, isTfidfEnabled, tfidfSearch, tfidfSearchSharded } from "../src/tfidf";
 import { answerCards, trending } from "../src/retrieval";
 import { handleMcp } from "../src/mcp";
 import worker from "../src/index";
@@ -382,6 +384,74 @@ await check("POST /mcp get_tool_details resolves pytest by name", async () => {
   const payload = JSON.parse(result.content[0].text) as { name: string; rating: number };
   assert.equal(payload.name, "pytest");
   assert.equal(payload.rating, 5);
+});
+
+console.log("\n[8] browser-defect fixes (heading count, why text, expand edges)");
+await check("answerCards label count equals the number of cards returned", async () => {
+  resetDataForTesting();
+  const env = { DATA: shardedBucket() };
+  const ans = await post("/api/answer", { question: "best python testing tool" }, env);
+  assert.equal(ans.status, 200);
+  const label = ans.body.label as string;
+  const cards = ans.body.cards as unknown[];
+  const m = /^Top (\d+) tools for “(.+)”$/.exec(label);
+  assert.ok(m, `expected "Top N tools for ..." label, got: ${label}`);
+  assert.equal(Number(m[1]), cards.length, `label says ${m[1]} but ${cards.length} cards returned`);
+});
+await check("buildWhyText names where each term matched (name vs description)", () => {
+  const descOnly = buildWhyText(
+    { id: "item:pytest", type: "item", name: "pytest", description: "Python testing framework", lastActivity: RECENT },
+    ["testing"],
+  );
+  assert.ok(descOnly.includes("Matches 'testing' in description"), descOnly);
+  const nameHit = buildWhyText(
+    { id: "item:python-tool", type: "item", name: "python-tool", description: "A handy tool", lastActivity: RECENT },
+    ["python"],
+  );
+  assert.ok(nameHit.includes("Matches 'python' in name"), nameHit);
+  // a term matched in the name is not repeated for the description
+  const both = buildWhyText(
+    { id: "item:playwright-python", type: "item", name: "playwright-python", description: "Python testing library", lastActivity: RECENT },
+    ["python", "testing"],
+  );
+  assert.ok(both.includes("Matches 'python' in name"), both);
+  assert.ok(both.includes("Matches 'testing' in description"), both);
+});
+await check("subgraphFromRoots keeps 1-hop edges to newly added neighbours", () => {
+  resetDataForTesting();
+  loadGraphData(tinyShard as never);
+  const sg = subgraphFromRoots(["list:awesome-python"]);
+  assert.equal(sg.nodes.length, 3, `expected list + 2 items, got ${sg.nodes.length}`);
+  assert.equal(sg.edges.length, 2, `expected 2 LISTED_IN edges, got ${sg.edges.length}`);
+  assert.ok(sg.edges.every((e) => e.type === "LISTED_IN"));
+});
+await check("GET /api/expand?id=item:pytest returns the item, its list, and the edge (fresh isolate)", async () => {
+  resetDataForTesting();
+  const env = { DATA: shardedBucket() };
+  const res = await get("/api/expand?id=item:pytest", env);
+  assert.equal(res.status, 200);
+  const sg = res.body.subgraph as { nodes: { id: string }[]; edges: { source: string; target: string }[] };
+  assert.ok(sg.nodes.some((n) => n.id === "item:pytest"), `item missing: ${JSON.stringify(sg.nodes)}`);
+  assert.ok(sg.nodes.some((n) => n.id === "list:awesome-python"), `list missing: ${JSON.stringify(sg.nodes)}`);
+  assert.equal(sg.edges.length, 1, `expected 1 LISTED_IN edge, got ${sg.edges.length}`);
+});
+await check("GET /api/expand?id=list:awesome-python returns 2 items and 2 edges", async () => {
+  resetDataForTesting();
+  const env = { DATA: shardedBucket() };
+  const res = await get("/api/expand?id=list:awesome-python", env);
+  assert.equal(res.status, 200);
+  const sg = res.body.subgraph as { nodes: { id: string }[]; edges: unknown[] };
+  assert.equal(sg.nodes.length, 3, `expected list + 2 items, got ${sg.nodes.length}`);
+  assert.equal(sg.edges.length, 2, `expected 2 LISTED_IN edges, got ${sg.edges.length}`);
+});
+await check("ensureSectionsForNode loads the shard for an item id without the node pre-loaded", async () => {
+  resetDataForTesting();
+  const env = { DATA: shardedBucket() };
+  await ensureData(env);
+  assert.equal(getNode("item:pytest"), undefined, "item should not be in the skeleton");
+  const loaded = await ensureSectionsForNode(env, "item:pytest");
+  assert.ok(loaded.includes("programming-languages"), `expected programming-languages loaded, got ${loaded}`);
+  assert.ok(getNode("item:pytest"), "item should be loaded after ensureSectionsForNode");
 });
 
 console.log(`\nSHARDS: ${passed} CHECKS PASSED, ${failed} FAILED\n`);
