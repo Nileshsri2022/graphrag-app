@@ -67,7 +67,7 @@ jobs:
         run: |
           cd scripts
           .venv/bin/python build_search_index.py ../data/graph.json \
-            --out ../worker/data/search.json
+            --out ../data/search.json
 
       - name: Validate generated graph (schema/size/counts)
         run: |
@@ -78,32 +78,29 @@ jobs:
           m = g['meta']
           assert m['repoCount'] > 0, 'repoCount is 0'
           assert m.get('listCount', 0) > 0, 'listCount is 0 — awesome layer missing'
-          assert len(g['nodes']) < 50000 and len(g['edges']) < 100000, 'graph exceeds hard caps'
+          assert len(g['nodes']) < 100000 and len(g['edges']) < 200000, 'graph exceeds hard caps'
           assert m['nodeCount'] == len(g['nodes']), 'nodeCount mismatch'
           assert m['edgeCount'] == len(g['edges']), 'edgeCount mismatch'
           ids = {n['id'] for n in g['nodes']}
           for e in g['edges']:
               assert e['source'] in ids and e['target'] in ids, f'edge references missing node: {e}'
               assert '|' not in e['source'] and '|' not in e['target'], 'edge id contains delimiter'
-          size = os.path.getsize('../worker/data/search.json')
-          assert size <= 500 * 1024, f'search.json exceeds 500 KB: {size} bytes'
+          size = os.path.getsize('../data/search.json')
+          assert size <= 10 * 1024 * 1024, f'search.json exceeds 10 MB: {size} bytes'
           print('graph validation OK:', m['nodeCount'], 'nodes,', m['edgeCount'], 'edges,',
                 m['listCount'], 'lists,', m.get('skippedLists'), 'skipped,',
                 'search.json', size, 'bytes')
           "
 
-      - name: Copy snapshot into worker bundle
-        # graph.json is copied in; search.json was already written straight
-        # into worker/data/ by the "Build TF-IDF search index" step.
-        run: |
-          cp data/graph.json worker/data/graph.json
-          ls -la worker/data/
-
       - name: Commit updated snapshot
         run: |
           git config user.name "graphrag-sync-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add data/graph.json worker/data/graph.json worker/data/search.json
+          # -f: data/graph.json is git-ignored for local dev; the workflow
+          # force-adds it (and data/search.json) as the git backup of the
+          # snapshot that also goes to R2. worker/data/* are the sync base
+          # graph + test fixtures and are never written by the sync.
+          git add -f data/graph.json data/search.json
           if git diff --cached --quiet; then
             echo "no changes — snapshot is fresh"
           else
@@ -115,6 +112,26 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Create R2 bucket (idempotent)
+        # The worker reads graph.json + search.json from this bucket at cold
+        # start; the objects are ~20 MB total (free tier: 10 GB storage).
+        # `|| true`: creating an existing bucket fails, and that is fine.
+        run: |
+          cd worker
+          npx wrangler r2 bucket create graphrag-data || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Upload data to R2
+        run: |
+          cd worker
+          npx wrangler r2 object put graphrag-data/graph.json --file=../data/graph.json
+          npx wrangler r2 object put graphrag-data/search.json --file=../data/search.json
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Build worker
         run: |
