@@ -10,12 +10,13 @@ LLM answers with real repo context. Subgraph shown in an interactive graph view.
 GitHub API/xlsx ──▶ scripts/sync_data.py ──▶ data/graph.json (snapshot)
                                                       │
                                                       ▼
-SPA (GitHub Pages) ──▶ Cloudflare Worker ──▶ in-memory graph + template retrieval
-                          │                            │
+SPA (GitHub Pages) ──▶ Cloudflare Worker ──▶ R2 (graph.json + search.json)
+                          │                     │  loaded once per isolate,
+                          │                     │  cached in memory
                           └──── OpenAI-compatible LLM (baseUrl + key + model from UI)
 ```
 
-- **Data layer:** `.venv` (uv) + openpyxl — exports the xlsx snapshot to an embedded JSON graph.
+- **Data layer:** `.venv` (uv) + openpyxl — exports the xlsx snapshot to an embedded JSON graph. The full graph (~13-15 MB) and the TF-IDF index (~5 MB) live in Cloudflare R2 (bucket `graphrag-data`, free tier) — they are NOT bundled into the Worker (free bundle limit: 1 MB compressed). The worker loads both objects at cold start and caches them in memory; missing/invalid data degrades gracefully (empty results / TF-IDF off, never a crash).
 - **Backend:** Cloudflare Worker (TypeScript). Endpoints:
   - `GET /api/health` — status + meta
   - `POST /api/query` — SSE stream: `subgraph` event → answer chunks → `done`
@@ -31,9 +32,13 @@ cd scripts && uv venv .venv && uv pip install --python .venv/Scripts/python.exe 
 .venv/Scripts/python.exe sync_data.py
 
 > Sync note: `sync_data.py` requires the source spreadsheet at `reports/sindresorhus_repos.xlsx`
-> (not committed — export it from GitHub). It writes `data/graph.json`. The Worker loads its own
-> bundled copy at `worker/data/graph.json`; after re-running sync, copy it over before deploying:
-> `cp data/graph.json ../worker/data/graph.json`
+> (not committed — export it from GitHub). It writes `data/graph.json`. The
+> worker does NOT bundle that file — it reads `graph.json` + `search.json`
+> from the R2 bucket `graphrag-data` at cold start. For local worker dev,
+> seed a local R2 bucket first (from `worker/`):
+> `wrangler r2 object put --local graphrag-data/graph.json --file=../data/graph.json`
+> and the same for `search.json` (the sync workflow creates the real bucket
+> and uploads both files automatically).
 
 # 2. backend (worker) — requires Node 18+
 cd ../worker && npm install
@@ -93,8 +98,8 @@ missing; cached entries older than 7 days are refetched. On HTTP 429 the
 script stops fetching immediately, keeps the cache, builds the graph from
 fetched data, records the rest in `meta.skippedLists`, and exits 0. A list
 whose README cannot be fetched is skipped the same way — the sync never
-fails as a whole because of one list. Hard caps: nodes < 50,000,
-edges < 100,000.
+fails as a whole because of one list. Hard caps: nodes < 100,000,
+edges < 200,000.
 
 ### Freshness + rating (1–5, computed at sync time)
 
@@ -122,12 +127,13 @@ needs a token), the item inherits its parent list's rating/freshness.
 
 `scripts/build_search_index.py` builds a TF-IDF inverted index over item +
 repo + list node names and descriptions and writes
-`worker/data/search.json` (format: `{"version": 1, "terms": {term: {idf,
+`data/search.json` (format: `{"version": 1, "terms": {term: {idf,
 postings: [[nodeId, weight], ...]}}, "norms": {nodeId: float}}`).
 Weight is `(1 + ln(tf)) * idf`, `idf = ln(1 + N/df)`; postings are sorted
 by weight, capped at 50 per term; terms with df < 2 are dropped unless they
-appear in a node's name. The file is trimmed until it fits the 500 KB
-budget (current graph: ~2,261 terms, ~349 KB). The worker ranks by TF-IDF
+appear in a node's name. The file is trimmed until it fits the 10 MB cap
+(the index lives in R2 now, so the old 500 KB bundle budget no longer
+applies; the full graph yields ~36,628 terms, ~5 MB). The worker ranks by TF-IDF
 cosine similarity plus synonym expansion — "meaning-based" search with
 zero per-query cost.
 
@@ -139,7 +145,7 @@ embeddings without a free-tier budget that covers a full rebuild.
 ```bash
 cd scripts
 python3 build_search_index.py [graph.json] [--out search.json]
-# defaults: ../worker/data/graph.json → ../worker/data/search.json
+# defaults: ../data/graph.json → ../data/search.json
 ```
 
 ## Deploy (zero cost)
@@ -149,10 +155,17 @@ python3 build_search_index.py [graph.json] [--out search.json]
 ```bash
 cd worker
 npx wrangler login            # browser sign-in (free Cloudflare account)
+npx wrangler r2 bucket create graphrag-data   # one-time; the sync workflow also creates it
 npx wrangler deploy           # prints https://graphrag-app.<subdomain>.workers.dev
 # optional: server-side default key (per-request UI key also works)
 npx wrangler secret put LLM_API_KEY
 ```
+
+The worker reads its data from the R2 bucket `graphrag-data`
+(`graph.json` + `search.json`, uploaded by the sync workflow after every
+data refresh; ~20 MB total, inside the free tier: 10 GB storage, 1M Class A
+/ 10M Class B ops per month). Local dev seeds a local bucket instead (see
+"Local development" above).
 
 ### 2. SPA → GitHub Pages
 
@@ -187,9 +200,13 @@ key ships in the bundle (keys live in browser localStorage only).
   200 calls/day (`LLM_DAILY_REQUEST_CAP` env var). The 30/min limiter is in-memory per Worker
   instance, so it weakens under multi-instance scaling — deploy in one region or move counters to KV.
 - *Rollback* — the worker is stateless; redeploy the previous commit (`git revert` + `wrangler deploy`).
-  The SPA is only the last deployed `dist/` on Pages.
-- *Data refresh* — rerun `scripts/sync_data.py` to regenerate `data/graph.json`, copy it into
-  `worker/data/graph.json`, rebuild, redeploy.
+  The SPA is only the last deployed `dist/` on Pages. Data rollback: re-upload
+  the previous snapshot from git (`data/graph.json` + `data/search.json` are
+  committed as the backup) with `wrangler r2 object put`.
+- *Data refresh* — rerun the sync (`scripts/sync_data.py` + `scripts/sync_awesome.py`
+  + `scripts/build_search_index.py`) to regenerate `data/graph.json` and
+  `data/search.json`, upload both to the R2 bucket, rebuild, redeploy. The
+  daily GitHub Actions "Data sync" workflow does all of this automatically.
 
 ## Security: tokens, trust boundary, runbook (v2)
 
@@ -229,8 +246,8 @@ sends its own key, and the base URL is pinned to known providers unless
 ```
 graphrag-app/
 ├─ scripts/            sync_data.py · sync_data_v2.py · sync_awesome.py · rating.py · build_search_index.py · mock_llm.py · .venv/
-├─ data/               graph.json (generated snapshot)
-├─ worker/             Cloudflare Worker (TypeScript)
+├─ data/               graph.json + search.json (generated snapshot, uploaded to R2)
+├─ worker/             Cloudflare Worker (TypeScript; data/ here are test fixtures only)
 ├─ frontend/           Vite + React + Cytoscape SPA
 └─ .github/workflows/  GitHub Pages deploy
 ```

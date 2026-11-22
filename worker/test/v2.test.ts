@@ -7,11 +7,26 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildIndex, buildWhyText, isTfidfEnabled, parseSearchJson, searchWithIndex, tfidfSearch, timeAgo } from "../src/tfidf";
+import { buildIndex, buildWhyText, isTfidfEnabled, loadSearchIndex, parseSearchJson, searchWithIndex, tfidfSearch, timeAgo } from "../src/tfidf";
 import { compareRanked, nodeRating, rateNode } from "../src/rating";
 import { answerCards, trending } from "../src/retrieval";
-import { allLists, sectionsWithCounts } from "../src/graph";
+import { allLists, getNode, isGraphLoaded, loadGraphData, sectionsWithCounts } from "../src/graph";
+import { dataStatus, ensureData, resetDataForTesting } from "../src/data";
 import worker, { answerLlm, resetAiCapsForTesting } from "../src/index";
+
+// The worker loads its data from R2 at cold start (nothing is bundled); tests
+// load the checked-in fixtures (worker/data/*) explicitly instead.
+function loadFixtures(): void {
+  assert.ok(
+    loadGraphData(JSON.parse(readFileSync(new URL("../data/graph.json", import.meta.url), "utf-8"))),
+    "fixture graph.json should load",
+  );
+  assert.ok(
+    loadSearchIndex(JSON.parse(readFileSync(new URL("../data/search.json", import.meta.url), "utf-8"))),
+    "fixture search.json should load",
+  );
+}
+loadFixtures();
 
 let passed = 0;
 let failed = 0;
@@ -157,8 +172,8 @@ await check("tfidfSearch degrades gracefully (array, no throw)", () => {
   assert.equal(typeof isTfidfEnabled(), "boolean");
 });
 
-console.log("\n[7] TF-IDF: absent search.json file (subprocess, real loader)");
-await check("loader with NO search.json -> disabled, tfidfSearch returns []", () => {
+console.log("\n[7] TF-IDF: no data files present (subprocess, module import)");
+await check("module import with NO data files around -> disabled, tfidfSearch returns []", () => {
   const dir = mkdtempSync(join(tmpdir(), "graphrag-tfidf-absent-"));
   try {
     cpSync(new URL("../src", import.meta.url), join(dir, "src"), { recursive: true });
@@ -319,6 +334,107 @@ await check("POST /api/answer-llm with fake AI -> 200 ai answer (HTTP level)", a
   assert.equal(body.answer, "fake ai answer");
   assert.ok(Array.isArray(body.cards));
 });
+
+console.log("\n[11] R2 data loading (data.ts)");
+type MockBucket = {
+  calls: string[];
+  get(key: string): Promise<{ json(): Promise<unknown>; text(): Promise<string> } | null>;
+};
+function mockBucket(files: Record<string, unknown>): MockBucket {
+  const calls: string[] = [];
+  return {
+    calls,
+    async get(key: string) {
+      calls.push(key);
+      if (!(key in files)) return null;
+      const value = files[key];
+      return {
+        json: async () => value,
+        text: async () => JSON.stringify(value),
+      };
+    },
+  };
+}
+const tinyGraph = {
+  meta: { repoCount: 1, nodeCount: 3, edgeCount: 2 },
+  nodes: [
+    { id: "repo:awesome-python", type: "repo", fullName: "vinta/awesome-python", description: "Awesome Python list", language: "Python", stars: 1000, forks: 10, url: "https://github.com/vinta/awesome-python", pushedAt: RECENT },
+    { id: "item:pytest", type: "item", name: "pytest", description: "Python testing framework", url: "https://github.com/pytest-dev/pytest" },
+    { id: "list:awesome-python", type: "list", name: "awesome-python", section: "Programming Languages" },
+  ],
+  edges: [
+    { source: "item:pytest", target: "list:awesome-python", type: "LISTED_IN" },
+    { source: "item:pytest", target: "repo:awesome-python", type: "LISTED_IN" },
+  ],
+};
+const tinySearch = {
+  version: 1,
+  terms: {
+    pytest: { idf: 1.0, postings: [["item:pytest", 1.0]] },
+    python: { idf: 0.5, postings: [["item:pytest", 0.5], ["repo:awesome-python", 0.5]] },
+    testing: { idf: 1.0, postings: [["item:pytest", 1.0]] },
+  },
+  norms: { "item:pytest": 1.0, "repo:awesome-python": 1.0 },
+};
+
+await check("mock R2 with graph+search -> loads, accessors work, tfidf enabled", async () => {
+  resetDataForTesting();
+  const s = await ensureData({ DATA: mockBucket({ "graph.json": tinyGraph, "search.json": tinySearch }) });
+  assert.deepEqual(s, { graph: true, search: true });
+  assert.deepEqual(dataStatus(), { graph: true, search: true });
+  assert.equal(isGraphLoaded(), true);
+  assert.equal(isTfidfEnabled(), true);
+  assert.equal(getNode("item:pytest")?.name, "pytest");
+  assert.equal(tfidfSearch("pytest")[0]?.id, "item:pytest");
+});
+await check("mock R2 with missing objects -> disabled, no crash", async () => {
+  resetDataForTesting();
+  const s = await ensureData({ DATA: mockBucket({}) });
+  assert.deepEqual(s, { graph: false, search: false });
+  assert.equal(getNode("item:pytest"), undefined);
+  assert.deepEqual(tfidfSearch("pytest"), []);
+  assert.deepEqual(answerCards("pytest", 5).cards, []);
+});
+await check("invalid shapes in bucket -> disabled, no crash", async () => {
+  resetDataForTesting();
+  const s = await ensureData({ DATA: mockBucket({ "graph.json": {}, "search.json": { version: 2, terms: {}, norms: {} } }) });
+  assert.deepEqual(s, { graph: false, search: false });
+  resetDataForTesting();
+  const throwing = {
+    get: async () => ({ json: async () => { throw new Error("bad json"); }, text: async () => "not json" }),
+  };
+  const s2 = await ensureData({ DATA: throwing });
+  assert.deepEqual(s2, { graph: false, search: false });
+});
+await check("ensureData is idempotent (one fetch per key)", async () => {
+  resetDataForTesting();
+  const bucket = mockBucket({ "graph.json": tinyGraph, "search.json": tinySearch });
+  const [a, b] = await Promise.all([ensureData({ DATA: bucket }), ensureData({ DATA: bucket })]);
+  assert.deepEqual(a, { graph: true, search: true });
+  assert.deepEqual(b, { graph: true, search: true });
+  assert.deepEqual(bucket.calls, ["graph.json", "search.json"]);
+  await ensureData({ DATA: bucket });
+  assert.deepEqual(bucket.calls, ["graph.json", "search.json"]);
+});
+await check("worker.fetch with mocked DATA loads and answers", async () => {
+  resetDataForTesting();
+  const res = await post("/api/answer", { question: "pytest" }, { DATA: mockBucket({ "graph.json": tinyGraph, "search.json": tinySearch }) }, { "CF-Connecting-IP": "10.0.0.11" });
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as { cards: { id: string }[] };
+  assert.ok(body.cards.length > 0);
+  assert.equal(body.cards[0].id, "item:pytest");
+});
+await check("worker.fetch with empty R2 -> 200, empty cards, health still ok", async () => {
+  resetDataForTesting();
+  const res = await post("/api/answer", { question: "pytest" }, { DATA: mockBucket({}) }, { "CF-Connecting-IP": "10.0.0.12" });
+  assert.equal(res.status, 200);
+  assert.deepEqual(((await res.json()) as { cards: unknown[] }).cards, []);
+  const health = await get("/api/health", { DATA: mockBucket({}) });
+  assert.equal(health.status, 200);
+  assert.equal(((await health.json()) as { ok: boolean }).ok, true);
+});
+// Leave the module in a sane state for anything that runs after this file.
+loadFixtures();
 
 console.log(`\nV2: ${passed} CHECKS PASSED, ${failed} FAILED\n`);
 if (failed > 0) process.exit(1);

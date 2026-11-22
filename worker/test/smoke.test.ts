@@ -2,8 +2,21 @@
 // Uses only node:assert + tsx; no external test framework.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { retrieve } from "../src/retrieval";
-import { meta, allRepos } from "../src/graph";
+import { loadGraphData, meta, allRepos } from "../src/graph";
+import { loadSearchIndex } from "../src/tfidf";
+
+// The worker loads its data from R2 at cold start (nothing is bundled); tests
+// load the checked-in fixtures (worker/data/*) explicitly instead.
+assert.ok(
+  loadGraphData(JSON.parse(readFileSync(new URL("../data/graph.json", import.meta.url), "utf-8"))),
+  "fixture graph.json should load",
+);
+assert.ok(
+  loadSearchIndex(JSON.parse(readFileSync(new URL("../data/search.json", import.meta.url), "utf-8"))),
+  "fixture search.json should load",
+);
 
 let passed = 0;
 function check(name: string, fn: () => void) {
