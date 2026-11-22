@@ -30,6 +30,7 @@ import {
   sectionsWithCounts,
   type Node,
 } from "./graph";
+import { catalogTrending, ensureSections, ensureSectionsForQuery, sectionsForQuery } from "./data";
 import { answerCards, trending } from "./retrieval";
 import { compareRanked, nodeRating } from "./rating";
 import { queryTerms } from "./tfidf";
@@ -353,12 +354,16 @@ function findAlternatives(node: Node, k = 3): { name: string; url?: string; rati
 }
 
 // ---------------------------------------------------------------------------
-// Tool implementations (pure: they read the loaded in-memory graph)
+// Tool implementations (pure: they read the loaded in-memory graph).
+// In sharded mode each tool first loads the sections it needs (via the
+// async dispatchTool below); the functions themselves stay synchronous and
+// operate on skeleton + loaded shards.
 // ---------------------------------------------------------------------------
 
-function searchBestTool(args: Record<string, unknown>): unknown {
+async function searchBestTool(args: Record<string, unknown>, env: unknown): Promise<unknown> {
   const query = reqString(args, "query", 500);
   const limit = optLimit(args, "limit", 5, 20);
+  await ensureSectionsForQuery(env, query);
   const { label, cards } = answerCards(query, limit);
   return {
     bestPick: cards[0]?.name ?? null,
@@ -367,12 +372,20 @@ function searchBestTool(args: Record<string, unknown>): unknown {
   };
 }
 
-function getToolDetails(args: Record<string, unknown>): unknown {
+async function getToolDetails(args: Record<string, unknown>, env: unknown): Promise<unknown> {
   const name = optString(args, "name", 200);
   const url = optString(args, "url", 500);
   if (!name && !url) {
     throw invalidParams("get_tool_details requires 'name' or 'url'");
   }
+  // Sharded mode: load the sections the name / URL tokens route to, so the
+  // node lookup below can find items. A URL contributes its last path
+  // segment as a name token (e.g. github.com/pytest-dev/pytest -> pytest).
+  const tokens = [
+    ...(name ? [name] : []),
+    ...(url ? [url.split("/").filter(Boolean).pop() ?? ""] : []),
+  ].filter(Boolean);
+  if (tokens.length > 0) await ensureSectionsForQuery(env, tokens.join(" "));
   let node: Node | undefined;
   if (url) node = findByUrl(url);
   if (!node && name) node = resolveByName(name);
@@ -399,7 +412,7 @@ function getToolDetails(args: Record<string, unknown>): unknown {
   };
 }
 
-function compareTools(args: Record<string, unknown>): unknown {
+async function compareTools(args: Record<string, unknown>, env: unknown): Promise<unknown> {
   const tools = args.tools;
   if (!Array.isArray(tools) || tools.length < 2 || tools.length > 3) {
     throw invalidParams("'tools' must be an array of 2-3 tool names or URLs");
@@ -409,6 +422,8 @@ function compareTools(args: Record<string, unknown>): unknown {
       throw invalidParams("'tools' entries must be non-empty strings");
     }
   }
+  // Sharded mode: load the sections every named tool routes to first.
+  await ensureSectionsForQuery(env, (tools as string[]).join(" "));
   const results = (tools as string[]).map((t) => {
     const query = t.trim();
     const node = /^https?:\/\//i.test(query) ? findByUrl(query) : resolveByName(query);
@@ -449,10 +464,14 @@ function compareTools(args: Record<string, unknown>): unknown {
   return { tools: results, summary };
 }
 
-function findAwesomeSection(args: Record<string, unknown>): unknown {
+async function findAwesomeSection(args: Record<string, unknown>, env: unknown): Promise<unknown> {
   const query = reqString(args, "query", 200);
   const limit = optLimit(args, "limit", 10, 20);
   const terms = queryTerms(query).filter((t) => t.length >= 2);
+  // Sharded mode: load the sections the query routes to, so itemCount per
+  // list is computed from loaded shards (lists themselves are in the
+  // skeleton, always loaded).
+  await ensureSectionsForQuery(env, query);
   const lists = allLists();
   const scored = lists
     .map((l) => {
@@ -490,9 +509,25 @@ function findAwesomeSection(args: Record<string, unknown>): unknown {
   };
 }
 
-function getTrendingTools(args: Record<string, unknown>): unknown {
+async function getTrendingTools(args: Record<string, unknown>, env: unknown): Promise<unknown> {
   const limit = optLimit(args, "limit", 10, 20);
   const category = optString(args, "category", 100);
+  // Sharded mode: the catalog already holds the global trending list and
+  // the per-section tops (no shard fetch). A category that is not a
+  // section name falls through to the shard-backed filter below.
+  if (!category) {
+    const fromCatalog = catalogTrending(limit);
+    if (fromCatalog) {
+      return { category: null, tools: fromCatalog.map(cardToTool) };
+    }
+  } else {
+    const fromCatalog = catalogTrending(limit, category);
+    if (fromCatalog) {
+      return { category, tools: fromCatalog.map(cardToTool) };
+    }
+    // Non-section category (e.g. a language): load its sections first.
+    await ensureSections(env, sectionsForQuery(category));
+  }
   // Fetch more than the limit, filter, then slice — so a category filter
   // still returns up to `limit` tools instead of a near-empty page.
   let tools = trending(50);
@@ -518,18 +553,18 @@ function getTrendingTools(args: Record<string, unknown>): unknown {
   };
 }
 
-function dispatchTool(name: string, args: Record<string, unknown>): unknown {
+async function dispatchTool(name: string, args: Record<string, unknown>, env: unknown): Promise<unknown> {
   switch (name) {
     case "search_best_tool":
-      return searchBestTool(args);
+      return searchBestTool(args, env);
     case "get_tool_details":
-      return getToolDetails(args);
+      return getToolDetails(args, env);
     case "compare_tools":
-      return compareTools(args);
+      return compareTools(args, env);
     case "find_awesome_section":
-      return findAwesomeSection(args);
+      return findAwesomeSection(args, env);
     case "get_trending_tools":
-      return getTrendingTools(args);
+      return getTrendingTools(args, env);
     default:
       throw new McpError(-32602, `Unknown tool: ${name}`);
   }
@@ -560,7 +595,7 @@ function rpcError(id: JsonRpcId, code: number, message: string): Record<string, 
 
 /** Handle one JSON-RPC request object. Returns a response object, or null
  *  for notifications (which get no response, per JSON-RPC 2.0). */
-async function handleRpcRequest(req: unknown): Promise<Record<string, unknown> | null> {
+async function handleRpcRequest(req: unknown, env: unknown): Promise<Record<string, unknown> | null> {
   if (typeof req !== "object" || req === null || Array.isArray(req)) {
     return rpcError(null, -32600, "Invalid Request: expected a JSON-RPC object");
   }
@@ -616,7 +651,7 @@ async function handleRpcRequest(req: unknown): Promise<Record<string, unknown> |
           return rpcError(id, -32602, "Invalid params: 'arguments' must be an object");
         }
         try {
-          const payload = dispatchTool(params.name, args as Record<string, unknown>);
+          const payload = await dispatchTool(params.name, args as Record<string, unknown>, env);
           return rpcResult(id, {
             content: [{ type: "text", text: JSON.stringify(payload) }],
           });
@@ -670,8 +705,11 @@ function rpcResponse(body: unknown, status = 200): Response {
  * batch (array). A request with no `id` is a notification and gets no
  * response (202, empty body). Malformed JSON -> -32700 Parse error.
  * Stateless: no Mcp-Session-Id is required or issued.
+ * `env` is the Worker env (for the R2 DATA bucket the tools load shards
+ * from); callers without R2 pass an empty object and tools run on
+ * whatever is already loaded (tests).
  */
-export async function handleMcp(request: Request): Promise<Response> {
+export async function handleMcp(request: Request, env: unknown = {}): Promise<Response> {
   if (request.method !== "POST") {
     return new Response(
       JSON.stringify({ error: "MCP endpoint accepts POST only (Streamable HTTP)" }),
@@ -690,7 +728,7 @@ export async function handleMcp(request: Request): Promise<Response> {
     }
     const responses: unknown[] = [];
     for (const item of body) {
-      const res = await handleRpcRequest(item);
+      const res = await handleRpcRequest(item, env);
       if (res !== null) responses.push(res);
     }
     if (responses.length === 0) {
@@ -698,7 +736,7 @@ export async function handleMcp(request: Request): Promise<Response> {
     }
     return rpcResponse(responses);
   }
-  const res = await handleRpcRequest(body);
+  const res = await handleRpcRequest(body, env);
   if (res === null) {
     return new Response(null, { status: 202, headers: { ...CORS_HEADERS } });
   }

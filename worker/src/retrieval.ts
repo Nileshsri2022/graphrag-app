@@ -21,7 +21,7 @@ import {
   type Subgraph,
 } from "./graph";
 import { compareRanked, nodeRating } from "./rating";
-import { buildWhyText, queryTerms, tfidfSearch, type TfIdfIndex } from "./tfidf";
+import { buildWhyText, queryTerms, tfidfSearch, tfidfSearchSharded, type TfIdfIndex } from "./tfidf";
 
 export type RetrievalResult = {
   subgraph: Subgraph;
@@ -54,8 +54,10 @@ const GENERIC = new Set([...STOP, "tool", "tools", "app", "apps", "website", "li
  * Content terms for item matching: deduped query terms (len >= 3) minus
  * stopwords/generic nouns. Falls back to all len>=3 terms when the query has
  * no content term at all (e.g. "best tool"), so items can still surface.
+ * Exported: the sharded loader (src/data.ts) routes queries to sections
+ * with the same content terms.
  */
-function contentTerms(terms: string[]): string[] {
+export function contentTerms(terms: string[]): string[] {
   const deduped = [...new Set(terms)].filter((t) => t.length >= 3);
   const content = deduped.filter((t) => !GENERIC.has(t));
   return content.length > 0 ? content : deduped;
@@ -407,7 +409,8 @@ function toCard(node: Node, rank: number, terms: string[]): AnswerCard {
  * score) breaks the ties compareRanked alone cannot — pre-v2 items carry no
  * dates/stars, so without it the order would be arbitrary graph order.
  * Pass an explicit TF-IDF index to override the loaded search.json index
- * (null disables TF-IDF); undefined uses the loaded index.
+ * (null disables TF-IDF); undefined uses the loaded index (global, or the
+ * aggregate across loaded shard indexes in sharded mode).
  */
 export function answerCards(
   question: string,
@@ -422,7 +425,8 @@ export function answerCards(
   const seen = new Map<string, Node>();
   for (const s of ret.sources) seen.set(s.id, s);
   const tfidfScores = new Map<string, number>();
-  for (const hit of tfidfSearch(q, 20, tfidfIndex)) {
+  const hits = tfidfIndex === undefined ? tfidfSearchSharded(q, 20) : tfidfSearch(q, 20, tfidfIndex);
+  for (const hit of hits) {
     tfidfScores.set(hit.id, hit.score);
     if (seen.has(hit.id)) continue;
     const n = getNode(hit.id);
@@ -463,4 +467,19 @@ export function trending(limit = 10): AnswerCard[] {
   return candidates
     .slice(0, Math.max(1, Math.min(limit, 50)))
     .map((n, i) => toCard(n, i + 1, []));
+}
+
+/**
+ * A precomputed catalog card (DESIGN-sharding.md): an AnswerCard without
+ * `why`. The Worker adds `why` at serve time (fresh relative time) from
+ * the entry's own fields.
+ */
+export type CatalogCard = Omit<AnswerCard, "why">;
+
+/** Build a full AnswerCard from a catalog entry (fresh `why`). */
+export function catalogCardToAnswerCard(entry: CatalogCard, terms: string[] = []): AnswerCard {
+  return {
+    ...entry,
+    why: buildWhyText(entry as unknown as Node, terms),
+  };
 }

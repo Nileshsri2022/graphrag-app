@@ -52,6 +52,134 @@ export let meta: Record<string, unknown> = {};
 let loaded = false;
 let langMapCache: Map<string, string> | null = null;
 
+// ---- sharded mode (DESIGN-sharding.md) ----
+// The production Worker never loads the full graph (37 MB). It loads a
+// small "skeleton" (non-item nodes + edges among them) at cold start from
+// catalog.json, then merges per-section shards (item nodes + LISTED_IN
+// edges) on demand. `catalogSections` holds the precomputed section counts
+// from the catalog; when set, sectionsWithCounts() returns them instead of
+// computing from (possibly partial) loaded edges.
+let catalogSections: { name: string; listCount: number; itemCount: number }[] | null = null;
+let skeletonLoaded = false;
+
+/** True once the skeleton (or a full graph) has been loaded. */
+export function isSkeletonLoaded(): boolean {
+  return skeletonLoaded || loaded;
+}
+
+/**
+ * Load the skeleton: all non-item nodes + edges whose endpoints are both
+ * non-item nodes. Called at cold start from catalog.json. Returns false
+ * when the shape is wrong (state untouched).
+ */
+export function loadSkeleton(raw: unknown): boolean {
+  if (typeof raw !== "object" || raw === null) return false;
+  const d = raw as Record<string, unknown>;
+  if (!Array.isArray(d.nodes) || !Array.isArray(d.edges)) return false;
+  const nodes: Node[] = [];
+  for (const n of d.nodes as unknown[]) {
+    if (typeof n !== "object" || n === null) return false;
+    const node = n as Record<string, unknown>;
+    if (typeof node.id !== "string" || typeof node.type !== "string") return false;
+    if (node.type === "item") return false; // skeleton must not contain items
+    nodes.push(node as unknown as Node);
+  }
+  const edges: Edge[] = [];
+  for (const e of d.edges as unknown[]) {
+    if (typeof e !== "object" || e === null) return false;
+    const edge = e as Record<string, unknown>;
+    if (typeof edge.source !== "string" || typeof edge.target !== "string" || typeof edge.type !== "string") return false;
+    edges.push(edge as unknown as Edge);
+  }
+  // Replace (never merge): the skeleton is the cold-start base.
+  NODES = nodes;
+  EDGES = edges;
+  byId = new Map(nodes.map((n) => [n.id, n]));
+  outEdges = new Map();
+  inEdges = new Map();
+  for (const e of edges) {
+    (outEdges.get(e.source) ?? outEdges.set(e.source, []).get(e.source)!).push(e);
+    (inEdges.get(e.target) ?? inEdges.set(e.target, []).get(e.target)!).push(e);
+  }
+  langMapCache = null;
+  skeletonLoaded = true;
+  return true;
+}
+
+/**
+ * Merge one section shard into the loaded graph: its item + list nodes and
+ * its LISTED_IN edges. Nodes already present (a duplicated item, or a list
+ * node already in the skeleton) are kept as-is; edges are deduped. Returns
+ * false when the shape is wrong (state untouched).
+ */
+export function loadShard(raw: unknown): boolean {
+  const parsed = parseShardJson(raw);
+  if (!parsed) return false;
+  for (const n of parsed.nodes) {
+    if (!byId.has(n.id)) {
+      byId.set(n.id, n);
+      NODES.push(n);
+    }
+  }
+  const seenEdge = new Set<string>();
+  for (const arr of [...outEdges.values(), ...inEdges.values()]) {
+    for (const e of arr) seenEdge.add(`${e.source}|${e.target}|${e.type}`);
+  }
+  for (const e of parsed.edges) {
+    const key = `${e.source}|${e.target}|${e.type}`;
+    if (seenEdge.has(key)) continue;
+    seenEdge.add(key);
+    EDGES.push(e);
+    (outEdges.get(e.source) ?? outEdges.set(e.source, []).get(e.source)!).push(e);
+    (inEdges.get(e.target) ?? inEdges.set(e.target, []).get(e.target)!).push(e);
+  }
+  langMapCache = null;
+  return true;
+}
+
+/** Validate a shard file ({version, section, nodes, edges, index}). */
+function parseShardJson(data: unknown): { nodes: Node[]; edges: Edge[] } | null {
+  if (typeof data !== "object" || data === null) return null;
+  const d = data as Record<string, unknown>;
+  if (!Array.isArray(d.nodes) || !Array.isArray(d.edges)) return null;
+  const nodes: Node[] = [];
+  for (const n of d.nodes as unknown[]) {
+    if (typeof n !== "object" || n === null) return null;
+    const node = n as Record<string, unknown>;
+    if (typeof node.id !== "string" || typeof node.type !== "string") return null;
+    nodes.push(node as unknown as Node);
+  }
+  const edges: Edge[] = [];
+  for (const e of d.edges as unknown[]) {
+    if (typeof e !== "object" || e === null) return null;
+    const edge = e as Record<string, unknown>;
+    if (typeof edge.source !== "string" || typeof edge.target !== "string" || typeof edge.type !== "string") return null;
+    edges.push(edge as unknown as Edge);
+  }
+  return { nodes, edges };
+}
+
+/** Set the catalog meta + precomputed sections (from catalog.json). */
+export function setCatalogMetaSections(
+  metaObj: Record<string, unknown>,
+  sections: { name: string; listCount: number; itemCount: number }[],
+): void {
+  meta = metaObj;
+  catalogSections = sections;
+}
+
+/** True when the catalog (sharded mode) has been loaded. */
+export function isCatalogLoaded(): boolean {
+  return catalogSections !== null;
+}
+
+/** Test-only: clear the skeleton, shards, catalog override, and graph. */
+export function resetShardedForTesting(): void {
+  catalogSections = null;
+  skeletonLoaded = false;
+  resetGraphForTesting();
+}
+
 /** True once a graph has been loaded (via loadGraphData / ensureData). */
 export function isGraphLoaded(): boolean {
   return loaded;
@@ -116,6 +244,8 @@ export function resetGraphForTesting(): void {
   meta = {};
   langMapCache = null;
   loaded = false;
+  catalogSections = null;
+  skeletonLoaded = false;
 }
 
 export function getNode(id: string): Node | undefined {
@@ -174,6 +304,9 @@ export function listOfItem(itemId: string): Node | undefined {
  * list nodes yet (current graph), falls back to the top 12 topics by repo count.
  */
 export function sectionsWithCounts(): { name: string; listCount: number; itemCount: number }[] {
+  // Sharded mode: the catalog precomputed these from the FULL graph.
+  // Computing from loaded data would undercount (only loaded shards).
+  if (catalogSections) return catalogSections;
   const lists = allLists();
   if (lists.length === 0) {
     const counts = new Map<string, number>();

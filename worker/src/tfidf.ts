@@ -105,6 +105,48 @@ export function parseSearchJson(data: unknown): TfIdfIndex | null {
 // tests call it with a fixture). Missing/invalid data -> TF-IDF disabled, never a crash. ----
 let loadedIndex: TfIdfIndex | null = null;
 
+// ---- sharded indexes (DESIGN-sharding.md) ----
+// Each loaded section shard registers its own TF-IDF index (global idf,
+// postings capped per term per section). Searches aggregate across all
+// loaded shard indexes, so scores stay comparable (same idf + per-doc norms).
+const shardIndexes = new Map<string, TfIdfIndex>();
+
+/** Register one section shard's TF-IDF index. False on invalid shape. */
+export function loadShardIndex(slug: string, raw: unknown): boolean {
+  const idx = parseSearchJson(raw);
+  if (!idx) return false;
+  shardIndexes.set(slug, idx);
+  return true;
+}
+
+/** Test-only: clear all registered shard indexes. */
+export function resetShardIndexesForTesting(): void {
+  shardIndexes.clear();
+}
+
+/** Slugs of the shard indexes currently loaded. */
+export function loadedShardSlugs(): string[] {
+  return [...shardIndexes.keys()];
+}
+
+/** Search across every loaded shard index, merged by id (max score wins).
+ *  Falls back to the single loaded global index when no shard index exists
+ *  (the full-graph / fixture path). */
+export function tfidfSearchSharded(query: string, limit = 10): TfIdfHit[] {
+  if (shardIndexes.size === 0) return tfidfSearch(query, limit);
+  const best = new Map<string, number>();
+  for (const idx of shardIndexes.values()) {
+    for (const hit of searchWithIndex(idx, query, limit)) {
+      const prev = best.get(hit.id);
+      if (prev === undefined || hit.score > prev) best.set(hit.id, hit.score);
+    }
+  }
+  return [...best.entries()]
+    .map(([id, score]) => ({ id, score }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(1, limit));
+}
+
 /** Load a parsed search.json into the module index. False on invalid shape (state untouched). */
 export function loadSearchIndex(raw: unknown): boolean {
   const idx = parseSearchJson(raw);
@@ -116,11 +158,12 @@ export function loadSearchIndex(raw: unknown): boolean {
 /** Test-only: clear the loaded index. */
 export function resetSearchIndexForTesting(): void {
   loadedIndex = null;
+  shardIndexes.clear();
 }
 
-/** True when a usable TF-IDF index was loaded from search.json. */
+/** True when a usable TF-IDF index was loaded (global or any shard). */
 export function isTfidfEnabled(): boolean {
-  return loadedIndex !== null;
+  return loadedIndex !== null || shardIndexes.size > 0;
 }
 
 /** Pure search over a given index (null index -> no hits, never throws). */
