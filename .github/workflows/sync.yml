@@ -110,6 +110,12 @@ jobs:
           .venv/bin/python build_search_index.py ../data/graph.json \
             --out ../data/search.json
 
+      - name: Build data shards (catalog + term-map + per-section)
+        run: |
+          cd scripts
+          .venv/bin/python build_shards.py ../data/graph.json ../data/search.json \
+            --out ../data/shards
+
       - name: Validate generated graph (schema/size/counts)
         run: |
           cd scripts
@@ -154,11 +160,14 @@ jobs:
             git push origin main
           fi
 
-      - name: Upload data to R2
+      - name: Upload shards to R2
         run: |
           cd worker
-          npx wrangler r2 object put graphrag-data/graph.json --file=../data/graph.json
-          npx wrangler r2 object put graphrag-data/search.json --file=../data/search.json
+          npx wrangler r2 object put graphrag-data/catalog.json --file=../data/shards/catalog.json
+          npx wrangler r2 object put graphrag-data/termmap.json --file=../data/shards/termmap.json
+          for f in ../data/shards/shards/*.json; do
+            npx wrangler r2 object put "graphrag-data/shards/$(basename "$f")" --file="$f"
+          done
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
