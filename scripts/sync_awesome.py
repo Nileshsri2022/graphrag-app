@@ -310,14 +310,14 @@ def graphql_list_meta(full_names):
     """
     raw = graphql_repo_lookup(
         full_names,
-        ["stargazersCount", "forkCount", "isArchived",
+        ["stargazerCount", "forkCount", "isArchived",
          "pushedAt", "updatedAt", "description"],
         cap=GRAPHQL_CAP,
         label="list meta")
     out = {}
     for fn, r in raw.items():
         out[fn] = {
-            "stars": int(r.get("stargazersCount") or 0),
+            "stars": int(r.get("stargazerCount") or 0),
             "forks": int(r.get("forkCount") or 0),
             "archived": bool(r.get("isArchived")),
             "pushedAt": (r.get("pushedAt") or "")[:10] or None,
@@ -336,13 +336,13 @@ def graphql_item_meta(full_names):
     """
     raw = graphql_repo_lookup(
         full_names,
-        ["stargazersCount", "pushedAt", "updatedAt", "isArchived"],
+        ["stargazerCount", "pushedAt", "updatedAt", "isArchived"],
         cap=GRAPHQL_CAP,
         label="item meta")
     out = {}
     for fn, r in raw.items():
         out[fn] = {
-            "stars": int(r.get("stargazersCount") or 0),
+            "stars": int(r.get("stargazerCount") or 0),
             "archived": bool(r.get("isArchived")),
             "pushedAt": (r.get("pushedAt") or "")[:10] or None,
             "updatedAt": (r.get("updatedAt") or "")[:10] or None,
