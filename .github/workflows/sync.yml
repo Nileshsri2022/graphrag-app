@@ -22,9 +22,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          # Full history: the Commit step rebases onto main before pushing,
-          # which needs more than the default shallow (depth-1) checkout.
-          fetch-depth: 0
 
       - name: Setup Node for wrangler (>=22)
         uses: actions/setup-node@v4
@@ -55,6 +52,18 @@ jobs:
         run: |
           cd worker
           npx wrangler r2 object get graphrag-data/cache/awesome_cache.json --file=../scripts/.awesome_cache.json --remote || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Restore item metadata cache from R2
+        # The item cache (scripts/.item_cache.json) holds per-item repo
+        # metadata (stars, pushedAt, archived); entries older than 7 days
+        # are re-resolved by sync_awesome.py. Same pattern as the list
+        # cache. `|| true`: first run has no cache yet.
+        run: |
+          cd worker
+          npx wrangler r2 object get graphrag-data/cache/item_cache.json --file=../scripts/.item_cache.json --remote || true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -93,6 +102,16 @@ jobs:
             --readme awesome-readme.md --full
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save item metadata cache to R2
+        # Save right after the awesome layer is built, so the cache persists
+        # even if a later step (index, validation, deploy) fails.
+        run: |
+          cd worker
+          npx wrangler r2 object put graphrag-data/cache/item_cache.json --file=../scripts/.item_cache.json --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Save awesome-list fetch cache to R2
         # Save right after the awesome layer is built, so the cache persists
@@ -138,27 +157,6 @@ jobs:
                 m['listCount'], 'lists,', m.get('skippedLists'), 'skipped,',
                 'search.json', size, 'bytes')
           "
-
-      - name: Commit updated snapshot
-        run: |
-          git config user.name "graphrag-sync-bot"
-          git config user.email "actions@users.noreply.github.com"
-          # -f: data/graph.json is git-ignored for local dev; the workflow
-          # force-adds it (and data/search.json) as the git backup of the
-          # snapshot that also goes to R2. worker/data/* are the sync base
-          # graph + test fixtures and are never written by the sync.
-          git add -f data/graph.json data/search.json
-          if git diff --cached --quiet; then
-            echo "no changes — snapshot is fresh"
-          else
-            git commit -m "chore(data): automatic graph refresh (cron)"
-            # main may have moved while this run was working (e.g. a sync.yml
-            # edit on the web UI) — rebase onto it so the push is not
-            # rejected as non-fast-forward. The snapshot files are only
-            # ever written by this workflow, so the rebase applies cleanly.
-            git pull --rebase origin main
-            git push origin main
-          fi
 
       - name: Upload shards to R2
         # The 30 objects (catalog + term-map + 28 per-section shards) are
