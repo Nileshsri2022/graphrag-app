@@ -8,6 +8,13 @@ on:
 permissions:
   contents: write
 
+# One Data sync at a time: two runs would both burn the shared GitHub
+# API budget (and the second would re-fetch what the first already did).
+# A queued run waits instead of cancelling the in-progress one.
+concurrency:
+  group: data-sync
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest
