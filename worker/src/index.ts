@@ -4,10 +4,20 @@
 //   GET  /api/health          -> { ok, meta }
 //   POST /api/query           -> SSE stream: subgraph event, answer chunks, done
 //   GET  /api/expand?id=<node> -> { nodes, edges } neighborhood (click-to-expand)
+//   POST /api/answer          -> { label, cards } ranked cards, NO key needed
+//   GET  /api/trending        -> { items } top items+repos by rating/stars/recency
+//   GET  /api/categories      -> { categories } sections with list/item counts
+//   POST /api/answer-llm      -> Workers AI short answer (capped); 501 if AI unset
+//   POST /api/resync          -> triggers the GitHub Actions data sync (gated)
 
-import { meta } from "./graph";
-import { expand, formatRelationships, formatSources, retrieve } from "./retrieval";
+import { meta, sectionsWithCounts } from "./graph";
+import { answerCards, expand, formatRelationships, formatSources, retrieve, trending } from "./retrieval";
 import { chat, defaultConfig, isAllowedProviderHost, itemPromptLine, validateBaseUrl, type LLMConfig } from "./llm";
+
+/** Worker env: string vars plus the optional Workers AI binding. */
+export type WorkerEnv = {
+  AI?: { run(model: string, input: unknown): Promise<{ response?: string }> };
+} & Record<string, string | undefined>;
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -73,6 +83,121 @@ function sse(stream: ReadableStream): Response {
       ...corsHeaders(),
     },
   });
+}
+
+/** Shared question validation (same messages as handleQuery). */
+function parseQuestion(body: unknown): { question?: string; error?: string } {
+  if (typeof body !== "object" || body === null || typeof (body as { question?: unknown }).question !== "string") {
+    return { error: "question must be a string" };
+  }
+  const question = ((body as { question: string }).question).trim();
+  if (!question || question.length > 500) {
+    return { error: "question is required (max 500 chars)" };
+  }
+  return { question };
+}
+
+async function handleAnswer(request: Request): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "invalid JSON body" }, 400);
+  }
+  const { question, error } = parseQuestion(body);
+  if (error || !question) return json({ error }, 400);
+  let limit = 10;
+  const rawLimit = (body as { limit?: unknown }).limit;
+  if (rawLimit !== undefined) {
+    if (typeof rawLimit !== "number" || !Number.isFinite(rawLimit)) {
+      return json({ error: "limit must be a number" }, 400);
+    }
+    limit = Math.max(1, Math.min(50, Math.floor(rawLimit)));
+  }
+  return json(answerCards(question, limit));
+}
+
+function handleTrending(): Response {
+  return json({ items: trending(10) });
+}
+
+function handleCategories(): Response {
+  return json({ categories: sectionsWithCounts() });
+}
+
+// ---- Workers AI daily caps (a SEPARATE in-memory counter from llmBudget) ----
+// Per-IP 20/day + a global daily cap (env AI_DAILY_CAP, default 200).
+// On a cap hit the caller falls back to the template answer — never spends money.
+const AI_PER_IP_PER_DAY = 20;
+let aiDaily: { day: number; count: number } = { day: 0, count: 0 };
+const aiIpDaily = new Map<string, { day: number; count: number }>();
+
+export function resetAiCapsForTesting(): void {
+  aiDaily = { day: 0, count: 0 };
+  aiIpDaily.clear();
+}
+
+function aiCapAllows(ip: string, env: WorkerEnv): boolean {
+  const cap = Number(env.AI_DAILY_CAP ?? 200);
+  const now = Date.now();
+  const dayStart = now - (now % DAY_MS);
+  if (aiDaily.day !== dayStart) aiDaily = { day: dayStart, count: 0 };
+  const ipEntry = aiIpDaily.get(ip);
+  const ipCount = ipEntry && ipEntry.day === dayStart ? ipEntry.count : 0;
+  if (aiDaily.count >= cap || ipCount >= AI_PER_IP_PER_DAY) return false;
+  aiDaily.count += 1;
+  aiIpDaily.set(ip, { day: dayStart, count: ipCount + 1 });
+  return true;
+}
+
+export type AnswerLlmResult = { status: number; body: unknown };
+
+/**
+ * Workers AI answer path, factored out of the route handler so tests can call
+ * it with a fake env (no Worker runtime needed).
+ * - No AI binding -> 501 {error: "AI not configured"} (UI falls back silently).
+ * - Cap hit (per-IP 20/day or global AI_DAILY_CAP) -> 200 template answer.
+ * - AI error / empty response -> 200 template answer (never fail the user).
+ */
+export async function answerLlm(question: string, env: WorkerEnv, ip: string): Promise<AnswerLlmResult> {
+  const template = (): AnswerLlmResult => {
+    const { label, cards } = answerCards(question, 10);
+    return { status: 200, body: { source: "template", label, cards } };
+  };
+  if (!env.AI) return { status: 501, body: { error: "AI not configured" } };
+  if (!aiCapAllows(ip, env)) return template();
+  try {
+    const ret = retrieve(question, 10);
+    const prompt = [
+      "Answer the user's question using ONLY the repositories listed below.",
+      "Be concise (max ~300 tokens). Never invent repositories that are not in the list.",
+      "--- BEGIN REPO DATA ---",
+      formatSources(ret.sources),
+      "--- END REPO DATA ---",
+      `Question: ${question}`,
+    ].join("\n");
+    const out = await env.AI.run("@cf/meta/llama-3-8b-instruct", { prompt, max_tokens: 300 });
+    const answer = (out?.response ?? "").trim();
+    if (!answer) return template();
+    const { label, cards } = answerCards(question, 10);
+    return { status: 200, body: { source: "ai", answer, label, cards } };
+  } catch {
+    return template();
+  }
+}
+
+async function handleAnswerLlm(request: Request, env: WorkerEnv): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "invalid JSON body" }, 400);
+  }
+  const { question, error } = parseQuestion(body);
+  if (error || !question) return json({ error }, 400);
+  const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+  const { status, body: out } = await answerLlm(question, env, ip);
+  return json(out, status);
 }
 
 function buildPrompt(question: string, label: string, sourcesCtx: string, relCtx: string): { role: string; content: string }[] {
@@ -253,7 +378,7 @@ function handleExpand(request: Request): Response {
 }
 
 export default {
-  async fetch(request: Request, env: Record<string, string | undefined>): Promise<Response> {
+  async fetch(request: Request, env: WorkerEnv): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === "OPTIONS") {
@@ -273,6 +398,18 @@ export default {
     }
     if (url.pathname === "/api/expand" && request.method === "GET") {
       return handleExpand(request);
+    }
+    if (url.pathname === "/api/answer" && request.method === "POST") {
+      return handleAnswer(request);
+    }
+    if (url.pathname === "/api/trending" && request.method === "GET") {
+      return handleTrending();
+    }
+    if (url.pathname === "/api/categories" && request.method === "GET") {
+      return handleCategories();
+    }
+    if (url.pathname === "/api/answer-llm" && request.method === "POST") {
+      return handleAnswerLlm(request, env);
     }
     if (url.pathname === "/api/resync" && request.method === "POST") {
       return handleResync(request, env);

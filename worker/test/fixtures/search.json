@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "terms": {
+    "pytest": {
+      "idf": 1.3862943611198906,
+      "postings": [
+        [
+          "item:pytest",
+          1.3862943611198906
+        ]
+      ]
+    },
+    "python": {
+      "idf": 0.9162907318741551,
+      "postings": [
+        [
+          "item:pytest",
+          0.9162907318741551
+        ],
+        [
+          "repo:awesome-python",
+          0.9162907318741551
+        ]
+      ]
+    },
+    "testing": {
+      "idf": 0.9162907318741551,
+      "postings": [
+        [
+          "item:pytest",
+          0.9162907318741551
+        ],
+        [
+          "item:vitest",
+          0.9162907318741551
+        ]
+      ]
+    },
+    "framework": {
+      "idf": 0.9162907318741551,
+      "postings": [
+        [
+          "item:pytest",
+          0.9162907318741551
+        ],
+        [
+          "item:vitest",
+          0.9162907318741551
+        ]
+      ]
+    },
+    "vitest": {
+      "idf": 1.3862943611198906,
+      "postings": [
+        [
+          "item:vitest",
+          1.3862943611198906
+        ]
+      ]
+    },
+    "javascript": {
+      "idf": 1.3862943611198906,
+      "postings": [
+        [
+          "item:vitest",
+          1.3862943611198906
+        ]
+      ]
+    },
+    "awesome": {
+      "idf": 1.3862943611198906,
+      "postings": [
+        [
+          "repo:awesome-python",
+          1.3862943611198906
+        ]
+      ]
+    },
+    "list": {
+      "idf": 1.3862943611198906,
+      "postings": [
+        [
+          "repo:awesome-python",
+          1.3862943611198906
+        ]
+      ]
+    }
+  },
+  "norms": {
+    "item:pytest": 2.107267940160489,
+    "item:vitest": 2.350064152737657,
+    "repo:awesome-python": 2.1640732003941285
+  }
+}

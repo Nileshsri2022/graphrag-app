@@ -2,6 +2,9 @@ name = "graphrag-app"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
 
+[ai]
+binding = "AI"
+
 [vars]
 # Default provider (overridable per-request from the SPA settings)
 LLM_BASE_URL = "https://api.openai.com/v1"

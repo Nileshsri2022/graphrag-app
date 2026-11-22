@@ -2,11 +2,14 @@
 // No LLM in the loop for graph queries — deterministic, bounded, cheap.
 
 import {
+  allItems,
   allRepos,
   contributorsOf,
   findItemsByName,
   findNodeByName,
+  getNode,
   languageNames,
+  listOfItem,
   reposByContributor,
   reposDependingOn,
   reposListingItem,
@@ -17,6 +20,8 @@ import {
   type Node,
   type Subgraph,
 } from "./graph";
+import { compareRanked, nodeRating } from "./rating";
+import { buildWhyText, queryTerms, tfidfSearch, type TfIdfIndex } from "./tfidf";
 
 export type RetrievalResult = {
   subgraph: Subgraph;
@@ -40,6 +45,21 @@ const STOP = new Set([
   "by", "on", "at", "do", "does", "did", "can", "could", "please",
   "about", "around", "like", "using", "use", "used",
 ]);
+
+// Generic nouns that match far too many items to be discriminating on their own
+// ("tool" matches every *-tool item, "best" matches every "best X" list entry).
+const GENERIC = new Set([...STOP, "tool", "tools", "app", "apps", "website", "library", "libraries", "awesome", "good", "free"]);
+
+/**
+ * Content terms for item matching: deduped query terms (len >= 3) minus
+ * stopwords/generic nouns. Falls back to all len>=3 terms when the query has
+ * no content term at all (e.g. "best tool"), so items can still surface.
+ */
+function contentTerms(terms: string[]): string[] {
+  const deduped = [...new Set(terms)].filter((t) => t.length >= 3);
+  const content = deduped.filter((t) => !GENERIC.has(t));
+  return content.length > 0 ? content : deduped;
+}
 
 function norm(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9\s#+.-]/g, " ");
@@ -333,4 +353,114 @@ export function formatRelationships(sg: Subgraph): string {
     lines.push(`- ${rel}`);
   }
   return lines.slice(0, 120).join("\n");
+}
+
+// ---- v2: ranking-aware answer cards (no LLM key needed) ----
+
+export type AnswerCard = {
+  rank: number;
+  id: string;
+  type: string;
+  name: string;
+  fullName?: string;
+  url?: string;
+  description?: string;
+  stars?: number;
+  forks?: number;
+  language?: string;
+  lastActivity?: string;
+  rating: number;
+  freshness: "fresh" | "stale" | "outdated";
+  why: string;
+  listName?: string;
+};
+
+function toCard(node: Node, rank: number, terms: string[]): AnswerCard {
+  const { rating, freshness } = nodeRating(node);
+  const parent = node.type === "item" ? listOfItem(node.id) : undefined;
+  const lastActivity = node.lastActivity ?? node.pushedAt;
+  return {
+    rank,
+    id: node.id,
+    type: node.type,
+    name: node.name ?? node.fullName ?? node.id,
+    ...(node.fullName ? { fullName: node.fullName } : {}),
+    ...(node.url ? { url: node.url } : {}),
+    ...(node.description ? { description: node.description } : {}),
+    ...(typeof node.stars === "number" ? { stars: node.stars } : {}),
+    ...(typeof node.forks === "number" ? { forks: node.forks } : {}),
+    ...(node.language ? { language: node.language } : {}),
+    ...(lastActivity ? { lastActivity } : {}),
+    rating,
+    freshness,
+    why: buildWhyText(node, terms),
+    ...(parent ? { listName: parent.name ?? parent.fullName ?? parent.id } : {}),
+  };
+}
+
+/**
+ * No-key answer path: template retrieval + TF-IDF hits + item name/description
+ * matches, merged and deduped by id (TF-IDF-only hits appended after template
+ * hits), then ranked. Items whose name/description matches the query surface
+ * FIRST (the awesome layer is the point); repos follow, sorted by compareRanked.
+ * Within the item group, match strength (distinct content terms, then TF-IDF
+ * score) breaks the ties compareRanked alone cannot — pre-v2 items carry no
+ * dates/stars, so without it the order would be arbitrary graph order.
+ * Pass an explicit TF-IDF index to override the loaded search.json index
+ * (null disables TF-IDF); undefined uses the loaded index.
+ */
+export function answerCards(
+  question: string,
+  limit = 10,
+  tfidfIndex?: TfIdfIndex | null,
+): { label: string; cards: AnswerCard[] } {
+  const q = question.trim();
+  const terms = queryTerms(q);
+  const matchTerms = contentTerms(terms);
+  const ret = retrieve(q, 30);
+
+  const seen = new Map<string, Node>();
+  for (const s of ret.sources) seen.set(s.id, s);
+  const tfidfScores = new Map<string, number>();
+  for (const hit of tfidfSearch(q, 20, tfidfIndex)) {
+    tfidfScores.set(hit.id, hit.score);
+    if (seen.has(hit.id)) continue;
+    const n = getNode(hit.id);
+    if (n) seen.set(n.id, n);
+  }
+  if (matchTerms.length > 0) {
+    for (const item of allItems()) {
+      if (seen.has(item.id)) continue;
+      const hay = `${item.name ?? ""} ${item.description ?? ""}`.toLowerCase();
+      if (matchTerms.some((t) => hay.includes(t))) seen.set(item.id, item);
+    }
+  }
+
+  const hayOf = (n: Node) => `${n.name ?? ""} ${n.description ?? ""}`.toLowerCase();
+  const matchCount = (n: Node) => {
+    const hay = hayOf(n);
+    return matchTerms.filter((t) => hay.includes(t)).length;
+  };
+  const matchesQuery = (n: Node) => matchCount(n) > 0;
+  const all = [...seen.values()];
+  const itemsFirst = all
+    .filter((n) => n.type === "item" && matchesQuery(n))
+    .sort(
+      (a, b) =>
+        matchCount(b) - matchCount(a) ||
+        (tfidfScores.get(b.id) ?? 0) - (tfidfScores.get(a.id) ?? 0) ||
+        compareRanked(a, b),
+    );
+  const rest = all.filter((n) => !(n.type === "item" && matchesQuery(n))).sort(compareRanked);
+  const picked = [...itemsFirst, ...rest].slice(0, Math.max(1, Math.min(limit, 50)));
+  return { label: ret.label, cards: picked.map((n, i) => toCard(n, i + 1, matchTerms)) };
+}
+
+/** Trending: top items + repos by compareRanked (rating, stars, recency). */
+export function trending(limit = 10): AnswerCard[] {
+  const candidates = [...allRepos(), ...allItems()];
+  candidates.sort(compareRanked);
+  return candidates
+    .slice(0, Math.max(1, Math.min(limit, 50)))
+    .map((n, i) => toCard(n, i + 1, []));
 }
