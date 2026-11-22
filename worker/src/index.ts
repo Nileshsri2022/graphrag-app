@@ -17,7 +17,7 @@
 //                                initialize / tools/list / tools/call / ping —
 //                                the same R2 graph + ranking, for AI agents.
 
-import { ensureData } from "./data";
+import { catalogSections, catalogTrending, ensureData, ensureSectionsForNode, ensureSectionsForQuery } from "./data";
 import { meta, sectionsWithCounts } from "./graph";
 import { answerCards, expand, formatRelationships, formatSources, retrieve, trending } from "./retrieval";
 import { chat, defaultConfig, isAllowedProviderHost, itemPromptLine, validateBaseUrl, type LLMConfig } from "./llm";
@@ -106,7 +106,7 @@ function parseQuestion(body: unknown): { question?: string; error?: string } {
   return { question };
 }
 
-async function handleAnswer(request: Request): Promise<Response> {
+async function handleAnswer(request: Request, env: WorkerEnv): Promise<Response> {
   let body: unknown;
   try {
     body = await request.json();
@@ -123,15 +123,22 @@ async function handleAnswer(request: Request): Promise<Response> {
     }
     limit = Math.max(1, Math.min(50, Math.floor(rawLimit)));
   }
+  // Sharded mode: load the sections this question touches before the
+  // (synchronous) retrieval runs. No-op on the legacy full-graph path.
+  await ensureSectionsForQuery(env, question);
   return json(answerCards(question, limit));
 }
 
 function handleTrending(): Response {
-  return json({ items: trending(10) });
+  // Sharded mode: precomputed in the catalog (no shard fetch). Legacy
+  // full-graph path: rank from the loaded graph as before.
+  const fromCatalog = catalogTrending(10);
+  return json({ items: fromCatalog ?? trending(10) });
 }
 
 function handleCategories(): Response {
-  return json({ categories: sectionsWithCounts() });
+  const fromCatalog = catalogSections();
+  return json({ categories: fromCatalog ?? sectionsWithCounts() });
 }
 
 // ---- Workers AI daily caps (a SEPARATE in-memory counter from llmBudget) ----
@@ -174,6 +181,9 @@ export async function answerLlm(question: string, env: WorkerEnv, ip: string): P
     return { status: 200, body: { source: "template", label, cards } };
   };
   if (!env.AI) return { status: 501, body: { error: "AI not configured" } };
+  // Sharded mode: load the sections this question touches before the
+  // (synchronous) retrieval runs. No-op on the legacy full-graph path.
+  await ensureSectionsForQuery(env, question);
   if (!aiCapAllows(ip, env)) return template();
   try {
     const ret = retrieve(question, 10);
@@ -289,6 +299,9 @@ async function handleQuery(request: Request, env: Record<string, string | undefi
     return json({ error: "daily LLM budget reached — try again tomorrow" }, 429);
   }
 
+  // Sharded mode: load the sections this question touches before the
+  // (synchronous) retrieval runs. No-op on the legacy full-graph path.
+  await ensureSectionsForQuery(env, question);
   const retrieval = retrieve(question);
 
   const encoder = new TextEncoder();
@@ -378,10 +391,12 @@ async function handleResync(request: Request, env: Record<string, string | undef
   }
 }
 
-function handleExpand(request: Request): Response {
+async function handleExpand(request: Request, env: WorkerEnv): Promise<Response> {
   const url = new URL(request.url);
   const id = url.searchParams.get("id") ?? "";
   if (!id) return json({ error: "id is required" }, 400);
+  // Sharded mode: load the shard containing this node first.
+  await ensureSectionsForNode(env, id);
   const subgraph = expand(id, 30);
   return json({ subgraph });
 }
@@ -409,18 +424,19 @@ export default {
     }
     // MCP server for AI agents (Claude, Cursor, VS Code): same R2 data and
     // ranking as the /api/* routes, exposed as MCP tools. ensureData already
-    // ran above, so the graph + index are loaded before any tool runs.
+    // ran above, so the catalog + term-map are loaded before any tool runs;
+    // each tool loads its shards on demand (handleMcp receives env).
     if (url.pathname === "/mcp") {
-      return handleMcp(request);
+      return handleMcp(request, env);
     }
     if (url.pathname === "/api/query" && request.method === "POST") {
       return handleQuery(request, env);
     }
     if (url.pathname === "/api/expand" && request.method === "GET") {
-      return handleExpand(request);
+      return handleExpand(request, env);
     }
     if (url.pathname === "/api/answer" && request.method === "POST") {
-      return handleAnswer(request);
+      return handleAnswer(request, env);
     }
     if (url.pathname === "/api/trending" && request.method === "GET") {
       return handleTrending();

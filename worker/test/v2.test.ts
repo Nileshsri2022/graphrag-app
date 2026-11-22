@@ -380,8 +380,8 @@ const tinySearch = {
 await check("mock R2 with graph+search -> loads, accessors work, tfidf enabled", async () => {
   resetDataForTesting();
   const s = await ensureData({ DATA: mockBucket({ "graph.json": tinyGraph, "search.json": tinySearch }) });
-  assert.deepEqual(s, { graph: true, search: true });
-  assert.deepEqual(dataStatus(), { graph: true, search: true });
+  assert.deepEqual(s, { graph: true, search: true, sharded: false, shards: [] });
+  assert.deepEqual(dataStatus(), { graph: true, search: true, sharded: false, shards: [] });
   assert.equal(isGraphLoaded(), true);
   assert.equal(isTfidfEnabled(), true);
   assert.equal(getNode("item:pytest")?.name, "pytest");
@@ -390,7 +390,7 @@ await check("mock R2 with graph+search -> loads, accessors work, tfidf enabled",
 await check("mock R2 with missing objects -> disabled, no crash", async () => {
   resetDataForTesting();
   const s = await ensureData({ DATA: mockBucket({}) });
-  assert.deepEqual(s, { graph: false, search: false });
+  assert.deepEqual(s, { graph: false, search: false, sharded: false, shards: [] });
   assert.equal(getNode("item:pytest"), undefined);
   assert.deepEqual(tfidfSearch("pytest"), []);
   assert.deepEqual(answerCards("pytest", 5).cards, []);
@@ -398,23 +398,25 @@ await check("mock R2 with missing objects -> disabled, no crash", async () => {
 await check("invalid shapes in bucket -> disabled, no crash", async () => {
   resetDataForTesting();
   const s = await ensureData({ DATA: mockBucket({ "graph.json": {}, "search.json": { version: 2, terms: {}, norms: {} } }) });
-  assert.deepEqual(s, { graph: false, search: false });
+  assert.deepEqual(s, { graph: false, search: false, sharded: false, shards: [] });
   resetDataForTesting();
   const throwing = {
     get: async () => ({ json: async () => { throw new Error("bad json"); }, text: async () => "not json" }),
   };
   const s2 = await ensureData({ DATA: throwing });
-  assert.deepEqual(s2, { graph: false, search: false });
+  assert.deepEqual(s2, { graph: false, search: false, sharded: false, shards: [] });
 });
 await check("ensureData is idempotent (one fetch per key)", async () => {
   resetDataForTesting();
   const bucket = mockBucket({ "graph.json": tinyGraph, "search.json": tinySearch });
   const [a, b] = await Promise.all([ensureData({ DATA: bucket }), ensureData({ DATA: bucket })]);
-  assert.deepEqual(a, { graph: true, search: true });
-  assert.deepEqual(b, { graph: true, search: true });
-  assert.deepEqual(bucket.calls, ["graph.json", "search.json"]);
+  assert.deepEqual(a, { graph: true, search: true, sharded: false, shards: [] });
+  assert.deepEqual(b, { graph: true, search: true, sharded: false, shards: [] });
+  // Sharded path is tried first (catalog + termmap), then the legacy
+  // full-graph fallback. Still one fetch per key, never re-fetched.
+  assert.deepEqual(bucket.calls, ["catalog.json", "termmap.json", "graph.json", "search.json"]);
   await ensureData({ DATA: bucket });
-  assert.deepEqual(bucket.calls, ["graph.json", "search.json"]);
+  assert.deepEqual(bucket.calls, ["catalog.json", "termmap.json", "graph.json", "search.json"]);
 });
 await check("worker.fetch with mocked DATA loads and answers", async () => {
   resetDataForTesting();
