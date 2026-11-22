@@ -13,11 +13,15 @@
 //   GET  /api/categories      -> { categories } sections with list/item counts
 //   POST /api/answer-llm      -> Workers AI short answer (capped); 501 if AI unset
 //   POST /api/resync          -> triggers the GitHub Actions data sync (gated)
+//   POST /mcp                 -> MCP server (Streamable HTTP, JSON-RPC 2.0):
+//                                initialize / tools/list / tools/call / ping —
+//                                the same R2 graph + ranking, for AI agents.
 
 import { ensureData } from "./data";
 import { meta, sectionsWithCounts } from "./graph";
 import { answerCards, expand, formatRelationships, formatSources, retrieve, trending } from "./retrieval";
 import { chat, defaultConfig, isAllowedProviderHost, itemPromptLine, validateBaseUrl, type LLMConfig } from "./llm";
+import { handleMcp } from "./mcp";
 
 /** Worker env: string vars plus the optional Workers AI binding. */
 export type WorkerEnv = {
@@ -402,6 +406,12 @@ export default {
 
     if (url.pathname === "/api/health" && request.method === "GET") {
       return json({ ok: true, meta });
+    }
+    // MCP server for AI agents (Claude, Cursor, VS Code): same R2 data and
+    // ranking as the /api/* routes, exposed as MCP tools. ensureData already
+    // ran above, so the graph + index are loaded before any tool runs.
+    if (url.pathname === "/mcp") {
+      return handleMcp(request);
     }
     if (url.pathname === "/api/query" && request.method === "POST") {
       return handleQuery(request, env);
