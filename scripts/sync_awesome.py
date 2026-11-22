@@ -23,10 +23,23 @@ immediately (no retry loop); what was fetched stays cached, the graph is
 built from fetched data, the rest are recorded as skipped with reason
 "rate-limited", and the script exits 0.
 
+List metadata (stars/forks/archived/pushedAt) comes from batched GraphQL
+lookups (aliases, max 50/query, ~14 queries for all 673 lists); each list
+README is still one REST call. A full run is therefore ~673 REST calls
+(readme) + ~14 GraphQL queries, down from ~1,346 REST calls. A list whose
+metadata GraphQL misses falls back to one REST GET /repos/{o}/{r} for
+that list only.
+
 Item GitHub metadata (stars/pushedAt/archived) comes from batched GraphQL
 lookups (aliases, max 50/query), capped at 5000 lookups per run. Without a
 token (GraphQL requires auth) or on failure/miss, an item inherits its
-parent list's rating/freshness.
+parent list's rating/freshness. GraphQL payload errors are logged (the
+old code silently ignored them, which hid why item lookups returned 0).
+
+Pre-flight rate-limit check: before fetching, the script reads the core
+REST budget (GET /rate_limit, free) and exits non-zero if it cannot cover
+the lists that need fetching, instead of fetching a few and building a
+partial graph.
 
 Hard caps: nodes < 100,000, edges < 200,000. A list whose README cannot be
 fetched is skipped and recorded in meta.skippedLists -- the sync never
@@ -218,26 +231,39 @@ def fetch_list_readme(full_name):
     return text if isinstance(text, str) and text else None
 
 
-def graphql_item_meta(full_names):
-    """Batched GraphQL lookups for item repos.
+def graphql_repo_lookup(full_names, fields, cap, label):
+    """Batched GraphQL repository lookups (shared by list + item meta).
 
-    Returns {fullName: meta-dict}. Requires a token; without one (or on
-    any failure) returns {} and callers fall back to the parent list.
-    Capped at GRAPHQL_CAP lookups per run, GRAPHQL_BATCH per query.
+    full_names: list of 'owner/repo' strings.
+    fields: GraphQL scalar field names to request inside repository{...}.
+    cap: max repos to resolve in this call.
+    label: short label for log lines (e.g. 'list meta', 'item meta').
+    Returns {fullName: {graphqlField: value}} for repos that resolved.
+    Requires a token; without one returns {} (callers fall back).
+    Raises RateLimited on HTTP 429. Other failures return what resolved
+    so far. Payload errors are LOGGED: the old code silently ignored
+    them, which is why item lookups reported 0 resolved in every run
+    with no diagnostic.
     """
     if not TOKEN or not full_names:
         return {}
     out = {}
-    names = sorted(set(full_names))[:GRAPHQL_CAP]
+    names = sorted(set(full_names))[:cap]
     for i in range(0, len(names), GRAPHQL_BATCH):
         batch = names[i:i + GRAPHQL_BATCH]
-        fields = []
+        parts = []
+        alias_to_fn = {}
         for j, fn in enumerate(batch):
+            if "/" not in fn:
+                continue
             owner, repo = fn.split("/", 1)
-            fields.append(
+            parts.append(
                 f'r{j}: repository(owner: "{owner}", name: "{repo}") {{ '
-                f"stargazersCount pushedAt updatedAt isArchived }}")
-        query = "query { " + " ".join(fields) + " }"
+                + " ".join(fields) + " }")
+            alias_to_fn[f"r{j}"] = fn
+        if not parts:
+            continue
+        query = "query { " + " ".join(parts) + " }"
         req = urllib.request.Request(
             f"{API}/graphql",
             data=json.dumps({"query": query}).encode("utf-8"),
@@ -249,23 +275,78 @@ def graphql_item_meta(full_names):
         except urllib.error.HTTPError as e:
             if e.code == 429:
                 raise RateLimited("429 on GraphQL")
-            log(f"  GraphQL HTTP {e.code} -- remaining items inherit parent")
+            log(f"  GraphQL HTTP {e.code} -- remaining {label} inherit parent")
             return out
         except Exception as exc:  # noqa: BLE001
-            log(f"  GraphQL error: {exc} -- remaining items inherit parent")
+            log(f"  GraphQL error: {exc} -- remaining {label} inherit parent")
             return out
+        errors = payload.get("errors")
+        if errors:
+            first = errors[0] if isinstance(errors, list) and errors else {}
+            msg = first.get("message", "") if isinstance(first, dict) else str(first)
+            log(f"  GraphQL errors ({label}): {msg} -- "
+                "repos in this batch inherit parent signals")
         data = payload.get("data") or {}
-        for j, fn in enumerate(batch):
-            r = data.get(f"r{j}")
+        for alias, fn in alias_to_fn.items():
+            r = data.get(alias)
             if not r:
                 continue
-            out[fn] = {
-                "stars": int(r.get("stargazersCount") or 0),
-                "archived": bool(r.get("isArchived")),
-                "pushedAt": (r.get("pushedAt") or "")[:10] or None,
-                "updatedAt": (r.get("updatedAt") or "")[:10] or None,
-            }
-        log(f"  GraphQL: {len(out)} item repos resolved so far")
+            out[fn] = {f: r.get(f) for f in fields}
+        log(f"  GraphQL ({label}): {len(out)} repos resolved so far")
+    return out
+
+
+def graphql_list_meta(full_names):
+    """Batched GraphQL metadata for list repos.
+
+    Replaces one REST GET /repos/{o}/{r} per list (673 calls) with
+    ~14 GraphQL queries (50 repos each). Returns {fullName: meta-dict}
+    in the same shape as fetch_list_meta (stars, forks, archived,
+    pushedAt, updatedAt, description). A repo missing here falls back
+    to the REST fetch_list_meta for that list only.
+    Points estimate: ~50 points/query (1 node per repository; scalar
+    fields are free), ~700 points for a full 673-list run -- well
+    within the 5,000/hour GraphQL budget.
+    """
+    raw = graphql_repo_lookup(
+        full_names,
+        ["stargazersCount", "forkCount", "isArchived",
+         "pushedAt", "updatedAt", "description"],
+        cap=GRAPHQL_CAP,
+        label="list meta")
+    out = {}
+    for fn, r in raw.items():
+        out[fn] = {
+            "stars": int(r.get("stargazersCount") or 0),
+            "forks": int(r.get("forkCount") or 0),
+            "archived": bool(r.get("isArchived")),
+            "pushedAt": (r.get("pushedAt") or "")[:10] or None,
+            "updatedAt": (r.get("updatedAt") or "")[:10] or None,
+            "description": r.get("description") or "",
+        }
+    return out
+
+
+def graphql_item_meta(full_names):
+    """Batched GraphQL lookups for item repos.
+
+    Returns {fullName: meta-dict}. Requires a token; without one (or on
+    any failure) returns {} and callers fall back to the parent list.
+    Capped at GRAPHQL_CAP lookups per run, GRAPHQL_BATCH per query.
+    """
+    raw = graphql_repo_lookup(
+        full_names,
+        ["stargazersCount", "pushedAt", "updatedAt", "isArchived"],
+        cap=GRAPHQL_CAP,
+        label="item meta")
+    out = {}
+    for fn, r in raw.items():
+        out[fn] = {
+            "stars": int(r.get("stargazersCount") or 0),
+            "archived": bool(r.get("isArchived")),
+            "pushedAt": (r.get("pushedAt") or "")[:10] or None,
+            "updatedAt": (r.get("updatedAt") or "")[:10] or None,
+        }
     return out
 
 
@@ -281,6 +362,25 @@ def load_cache():
 def save_cache(cache):
     CACHE_PATH.write_text(json.dumps(cache, ensure_ascii=False),
                           encoding="utf-8")
+
+
+def core_rate_remaining():
+    """Remaining core REST budget, or None if it cannot be read.
+
+    GET /rate_limit is free (it does not consume the core budget).
+    Returns the integer remaining, 0 if already rate-limited, or None
+    on any failure (the caller proceeds; the in-loop 429 handling is
+    the backstop).
+    """
+    try:
+        d = gh_get("/rate_limit")
+    except RateLimited:
+        return 0
+    if not isinstance(d, dict):
+        return None
+    core = (d.get("resources") or {}).get("core") or {}
+    remaining = core.get("remaining")
+    return int(remaining) if isinstance(remaining, int) else None
 
 
 def main():
@@ -336,7 +436,48 @@ def main():
             return False
         return (datetime.now(timezone.utc).replace(tzinfo=None) - fetched).days < CACHE_TTL_DAYS
 
-    # ---- 2. fetch each list (README + repo meta), cached ----
+    # ---- 2a. which lists actually need fetching ----
+    to_fetch = [e for e in entries
+                if not cache_fresh(cache.get(e["fullName"]))]
+    log(f"lists needing fetch: {len(to_fetch)} "
+        f"({len(entries) - len(to_fetch)} fresh in cache)")
+
+    # ---- 2b. batched GraphQL metadata for the lists to fetch ----
+    # Replaces one REST GET /repos/{o}/{r} per list with ~14 GraphQL
+    # queries (50 repos each). A repo GraphQL misses falls back to the
+    # per-list REST fetch_list_meta in the loop below.
+    meta_by_fn = {}
+    if to_fetch:
+        try:
+            meta_by_fn = graphql_list_meta(
+                [e["fullName"] for e in to_fetch])
+            log(f"list metadata via GraphQL: {len(meta_by_fn)} "
+                f"of {len(to_fetch)} lists")
+        except RateLimited:
+            log("RATE LIMITED during GraphQL list meta -- "
+                "falling back to per-list REST metadata")
+            meta_by_fn = {}
+
+    # ---- 2c. pre-flight core rate-limit check (fail fast) ----
+    # Each list to fetch needs 1 REST call (README) if its metadata
+    # came from GraphQL, else 2 (README + REST metadata). If the
+    # remaining core budget cannot cover that, exit now with a clear
+    # message instead of fetching a few lists and building a partial
+    # graph. GET /rate_limit itself is free.
+    if to_fetch:
+        needed = sum(1 if e["fullName"] in meta_by_fn else 2
+                     for e in to_fetch) + 10
+        remaining = core_rate_remaining()
+        if remaining is not None and remaining < needed:
+            log(f"rate limit too low: {remaining} core calls remaining, "
+                f"need ~{needed} to fetch {len(to_fetch)} lists "
+                "-- wait for the hourly reset and re-trigger")
+            sys.exit(2)
+        if remaining is not None:
+            log(f"core rate limit OK: {remaining} remaining, "
+                f"need ~{needed}")
+
+    # ---- 2d. fetch each list (README + repo meta), cached ----
     for idx, entry in enumerate(entries, 1):
         fn = entry["fullName"]
         cached = cache.get(fn)
@@ -351,7 +492,7 @@ def main():
         log(f"[{idx}/{len(entries)}] {fn}")
         try:
             readme = fetch_list_readme(fn)
-            meta = fetch_list_meta(fn)
+            meta = meta_by_fn.get(fn) or fetch_list_meta(fn)
         except RateLimited as exc:
             log(f"  RATE LIMITED ({exc}) -- stopping fetches, "
                 "building from what was fetched")
@@ -373,9 +514,6 @@ def main():
         save_cache(cache)
         log(f"  {len(items)} items, stars={meta['stars']}, "
             f"pushedAt={meta['pushedAt']}")
-    if rate_limited:
-        # remaining uncached lists were already marked skipped above
-        pass
     log(f"lists fetched: {len(fetched_lists)}, skipped: {len(skipped)}")
 
     # ---- 3. item GitHub metadata (batched GraphQL, capped) ----
