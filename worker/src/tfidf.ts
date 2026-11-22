@@ -1,9 +1,11 @@
 // TF-IDF semantic search (DESIGN-v2.md §4) — free, build-time, no embeddings.
-// The index is built at sync time (data agent) and shipped as worker/data/search.json:
+// The index is built at sync time (data agent) and stored as search.json in
+// Cloudflare R2 (bucket "graphrag-data"); the worker loads it at cold start
+// via `loadSearchIndex` (see src/data.ts `ensureData`):
 //   {"version": 1, "terms": {"<term>": {"idf": <float>, "postings": [["<nodeId>", <weight>], ...]}}, "norms": {"<nodeId>": <float>}}
-// The file is loaded with a guarded dynamic import: if it is missing or
-// invalid, TF-IDF is disabled and search degrades to template matching.
-// The worker NEVER crashes on a missing/bad search.json.
+// The index is NOT bundled with the worker. If it is missing or invalid,
+// TF-IDF is disabled and search degrades to template matching.
+// The worker NEVER crashes on missing/bad search data.
 
 import type { Node } from "./graph";
 
@@ -99,14 +101,20 @@ export function parseSearchJson(data: unknown): TfIdfIndex | null {
   return { terms, norms };
 }
 
-// ---- loader (guarded: missing/invalid file -> TF-IDF disabled, never a crash) ----
+// ---- loader (explicit: the worker calls loadSearchIndex with the R2 object;
+// tests call it with a fixture). Missing/invalid data -> TF-IDF disabled, never a crash. ----
 let loadedIndex: TfIdfIndex | null = null;
-try {
-  // Dynamic import so a missing file rejects (catchable) instead of failing
-  // module load the way a static import would. Bundled by wrangler when present.
-  const mod = await import("../data/search.json");
-  loadedIndex = parseSearchJson(mod.default ?? mod);
-} catch {
+
+/** Load a parsed search.json into the module index. False on invalid shape (state untouched). */
+export function loadSearchIndex(raw: unknown): boolean {
+  const idx = parseSearchJson(raw);
+  if (!idx) return false;
+  loadedIndex = idx;
+  return true;
+}
+
+/** Test-only: clear the loaded index. */
+export function resetSearchIndexForTesting(): void {
   loadedIndex = null;
 }
 

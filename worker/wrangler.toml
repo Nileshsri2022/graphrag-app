@@ -5,6 +5,15 @@ compatibility_date = "2025-01-01"
 [ai]
 binding = "AI"
 
+# Data lives in R2, NOT in the Worker bundle (graph.json ~13-15 MB +
+# search.json ~5 MB vs the 1 MB free compressed bundle limit). The worker
+# loads both objects at cold start (src/data.ts) and caches them in memory.
+# The bucket is auto-created by the sync workflow; create it manually with:
+#   wrangler r2 bucket create graphrag-data
+[[r2_buckets]]
+binding = "DATA"
+bucket_name = "graphrag-data"
+
 [vars]
 # Default provider (overridable per-request from the SPA settings)
 LLM_BASE_URL = "https://api.openai.com/v1"

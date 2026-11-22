@@ -13,11 +13,13 @@ norms = sqrt(sum of squared weights) per doc. Postings sorted desc by
 weight, max 50 per term. Terms with df < 2 are dropped UNLESS the term
 appears in a node's name.
 
-Size budget: search.json MUST be <= 500 KB. The builder trims (lower
-postings cap, then drops low-idf terms) until it fits.
+Size cap: search.json MUST be <= 10 MB. The index lives in Cloudflare R2
+now (not in the Worker bundle), so the old 500 KB bundle budget no longer
+applies; 10 MB is a sanity cap. The builder trims (lower postings cap, then
+drops low-idf terms) until it fits.
 
 Usage: python3 build_search_index.py [graph.json] [--out search.json]
-Defaults: ../worker/data/graph.json -> ../worker/data/search.json
+Defaults: ../data/graph.json -> ../data/search.json
 """
 
 from __future__ import annotations
@@ -31,9 +33,9 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_GRAPH = HERE.parent / "worker" / "data" / "graph.json"
-DEFAULT_OUT = HERE.parent / "worker" / "data" / "search.json"
-MAX_BYTES = 500 * 1024
+DEFAULT_GRAPH = HERE.parent / "data" / "graph.json"
+DEFAULT_OUT = HERE.parent / "data" / "search.json"
+MAX_BYTES = 10 * 1024 * 1024  # 10 MB sanity cap (R2, not a bundle budget)
 MAX_POSTINGS = 50
 
 STOPWORDS = {
@@ -134,7 +136,8 @@ def main():
 
     index, n_docs, n_terms = build_index(graph)
     size = dump_size(index)
-    # Trim until it fits the 500 KB budget.
+    # Trim until it fits the 10 MB cap (safety valve; the full graph is ~5 MB
+    # and normally fits without trimming).
     cap = MAX_POSTINGS
     while size > MAX_BYTES and cap > 5:
         cap //= 2
@@ -156,7 +159,7 @@ def main():
           f"size: {size} bytes ({size / 1024:.1f} KB)  "
           f"limit: {MAX_BYTES} bytes  out: {out_path}")
     if size > MAX_BYTES:
-        print("WARNING: search.json still exceeds 500 KB budget", file=sys.stderr)
+        print("WARNING: search.json still exceeds 10 MB budget", file=sys.stderr)
         sys.exit(1)
     print("search index OK")
 

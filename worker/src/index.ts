@@ -1,5 +1,9 @@
 // GraphRAG Worker — zero-cost backend.
 //
+// Data (graph.json + search.json) lives in Cloudflare R2, NOT in the bundle:
+// the fetch handler awaits ensureData(env) once per isolate (cold start) and
+// caches the loaded data in memory. Missing data degrades gracefully.
+//
 // Endpoints:
 //   GET  /api/health          -> { ok, meta }
 //   POST /api/query           -> SSE stream: subgraph event, answer chunks, done
@@ -10,6 +14,7 @@
 //   POST /api/answer-llm      -> Workers AI short answer (capped); 501 if AI unset
 //   POST /api/resync          -> triggers the GitHub Actions data sync (gated)
 
+import { ensureData } from "./data";
 import { meta, sectionsWithCounts } from "./graph";
 import { answerCards, expand, formatRelationships, formatSources, retrieve, trending } from "./retrieval";
 import { chat, defaultConfig, isAllowedProviderHost, itemPromptLine, validateBaseUrl, type LLMConfig } from "./llm";
@@ -389,6 +394,11 @@ export default {
     if (rateLimited(ip)) {
       return json({ error: "rate limit exceeded — try again in a minute" }, 429);
     }
+
+    // Cold-start data load (idempotent; no-op on repeat requests). The worker
+    // must never serve from a half-loaded graph, and must never crash when
+    // R2 is unavailable — ensureData degrades to empty/disabled features.
+    await ensureData(env);
 
     if (url.pathname === "/api/health" && request.method === "GET") {
       return json({ ok: true, meta });

@@ -1,6 +1,11 @@
-// In-memory graph over the repo snapshot. Loaded once at worker startup.
-
-import graphData from "../data/graph.json";
+// In-memory graph over the repo snapshot.
+//
+// The graph is NOT bundled with the worker (it is ~13-15 MB; the free Worker
+// limit is 1 MB compressed). It is loaded at cold start from Cloudflare R2
+// (bucket "graphrag-data", key "graph.json") via `loadGraphData` — see
+// src/data.ts `ensureData`. Until loaded, every accessor returns empty
+// results and the worker never crashes on missing data. Tests load the
+// checked-in fixture (worker/data/graph.json) explicitly.
 
 export type Node = {
   id: string;
@@ -38,18 +43,80 @@ export type Subgraph = {
   edges: Edge[];
 };
 
-const NODES = graphData.nodes as Node[];
-const EDGES = graphData.edges as Edge[];
+let NODES: Node[] = [];
+let EDGES: Edge[] = [];
+let byId = new Map<string, Node>();
+let outEdges = new Map<string, Edge[]>();
+let inEdges = new Map<string, Edge[]>();
+export let meta: Record<string, unknown> = {};
+let loaded = false;
+let langMapCache: Map<string, string> | null = null;
 
-const byId = new Map<string, Node>(NODES.map((n) => [n.id, n]));
-const outEdges = new Map<string, Edge[]>();
-const inEdges = new Map<string, Edge[]>();
-for (const e of EDGES) {
-  (outEdges.get(e.source) ?? outEdges.set(e.source, []).get(e.source)!).push(e);
-  (inEdges.get(e.target) ?? inEdges.set(e.target, []).get(e.target)!).push(e);
+/** True once a graph has been loaded (via loadGraphData / ensureData). */
+export function isGraphLoaded(): boolean {
+  return loaded;
 }
 
-export const meta = graphData.meta as Record<string, unknown>;
+/** Validate raw parsed JSON into nodes/edges/meta; null when the shape is wrong. */
+function parseGraphJson(data: unknown): { nodes: Node[]; edges: Edge[]; meta: Record<string, unknown> } | null {
+  if (typeof data !== "object" || data === null) return null;
+  const d = data as Record<string, unknown>;
+  if (!Array.isArray(d.nodes) || !Array.isArray(d.edges)) return null;
+  const nodes: Node[] = [];
+  for (const n of d.nodes as unknown[]) {
+    if (typeof n !== "object" || n === null) return null;
+    const node = n as Record<string, unknown>;
+    if (typeof node.id !== "string" || typeof node.type !== "string") return null;
+    nodes.push(node as unknown as Node);
+  }
+  const edges: Edge[] = [];
+  for (const e of d.edges as unknown[]) {
+    if (typeof e !== "object" || e === null) return null;
+    const edge = e as Record<string, unknown>;
+    if (typeof edge.source !== "string" || typeof edge.target !== "string" || typeof edge.type !== "string") return null;
+    edges.push(edge as unknown as Edge);
+  }
+  const metaObj = typeof d.meta === "object" && d.meta !== null ? (d.meta as Record<string, unknown>) : {};
+  return { nodes, edges, meta: metaObj };
+}
+
+/**
+ * Load a graph into the module-level indexes. Returns false (leaving any
+ * previously loaded graph untouched) when the data is invalid.
+ */
+export function loadGraphData(raw: unknown): boolean {
+  const parsed = parseGraphJson(raw);
+  if (!parsed) return false;
+  const nextById = new Map<string, Node>();
+  const nextOut = new Map<string, Edge[]>();
+  const nextIn = new Map<string, Edge[]>();
+  for (const n of parsed.nodes) nextById.set(n.id, n);
+  for (const e of parsed.edges) {
+    (nextOut.get(e.source) ?? nextOut.set(e.source, []).get(e.source)!).push(e);
+    (nextIn.get(e.target) ?? nextIn.set(e.target, []).get(e.target)!).push(e);
+  }
+  NODES = parsed.nodes;
+  EDGES = parsed.edges;
+  byId = nextById;
+  outEdges = nextOut;
+  inEdges = nextIn;
+  meta = parsed.meta;
+  langMapCache = null;
+  loaded = true;
+  return true;
+}
+
+/** Test-only: clear the loaded graph (and the language cache). */
+export function resetGraphForTesting(): void {
+  NODES = [];
+  EDGES = [];
+  byId = new Map();
+  outEdges = new Map();
+  inEdges = new Map();
+  meta = {};
+  langMapCache = null;
+  loaded = false;
+}
 
 export function getNode(id: string): Node | undefined {
   return byId.get(id);
@@ -149,8 +216,6 @@ export function reposWithTopic(topic: string): Node[] {
   const ids = (inEdges.get(tid) ?? []).map((e) => e.source);
   return ids.map((id) => byId.get(id)!).filter(Boolean);
 }
-
-let langMapCache: Map<string, string> | null = null;
 
 /** lowercase -> exact stored language name (e.g. "typescript" -> "TypeScript"). */
 export function languageNames(): Map<string, string> {
