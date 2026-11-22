@@ -161,23 +161,48 @@ jobs:
           fi
 
       - name: Upload shards to R2
+        # The 30 objects (catalog + term-map + 28 per-section shards) are
+        # uploaded in parallel, 8 at a time — the puts are independent, and
+        # the sequential loop took ~5s. Any failed put fails the step:
+        # every background job's exit status is collected by `wait` below.
+        # (wrangler is already in the npx cache from the earlier steps in
+        # this run, so the parallel `npx` calls do not race on downloading it.)
         run: |
           cd worker
-          npx wrangler r2 object put graphrag-data/catalog.json --file=../data/shards/catalog.json --remote
-          npx wrangler r2 object put graphrag-data/termmap.json --file=../data/shards/termmap.json --remote
+          upload() {
+            npx wrangler r2 object put "$1" --file="$2" --remote
+          }
+          pids=()
+          start() {
+            # Wait for a free slot when 8 uploads are already running.
+            while [ "$(jobs -rp | wc -l)" -ge 8 ]; do
+              sleep 0.5
+            done
+            upload "$1" "$2" &
+            pids+=($!)
+          }
+          start graphrag-data/catalog.json ../data/shards/catalog.json
+          start graphrag-data/termmap.json ../data/shards/termmap.json
           for f in ../data/shards/shards/*.json; do
-            npx wrangler r2 object put "graphrag-data/shards/$(basename "$f")" --file="$f" --remote
+            start "graphrag-data/shards/$(basename "$f")" "$f"
           done
+          fail=0
+          for pid in "${pids[@]}"; do
+            wait "$pid" || fail=1
+          done
+          exit "$fail"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Build worker
+        # No `npm test` here: the test suite runs in ci.yml on every push /
+        # pull request (same `npm test`, plus the frontend build), so the
+        # sync run does not re-run it. The typecheck stays as a deploy gate.
         run: |
           cd worker
           npm ci
           npx tsc --noEmit
-          npm test
 
       - name: Deploy worker
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
