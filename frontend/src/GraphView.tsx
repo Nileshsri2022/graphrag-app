@@ -88,6 +88,12 @@ export default function GraphView({ subgraph, label }: Props) {
   const [legendOpen, setLegendOpen] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expandNote, setExpandNote] = useState<string | null>(null);
+  // Live node/edge counts for the caption. The caption must NOT read the
+  // `subgraph` prop (the initial snapshot) — expand adds elements to the
+  // Cytoscape instance imperatively, so the prop never changes and the
+  // caption stayed at "2 nodes · 1 edges" after the graph grew. Counts are
+  // re-read from the live Cytoscape element set after every change.
+  const [counts, setCounts] = useState<{ nodes: number; edges: number } | null>(null);
   const [hovered, setHovered] = useState<{ fullName?: string; kind?: string; stars?: number; language?: string; description?: string; url?: string } | null>(null);
 
   useEffect(() => {
@@ -234,6 +240,7 @@ export default function GraphView({ subgraph, label }: Props) {
 
     cyRef.current = cy;
     cy.fit(undefined, 50);
+    setCounts({ nodes: cy.nodes().length, edges: cy.edges().length });
     return () => {
       cy.destroy();
       cyRef.current = null;
@@ -270,6 +277,8 @@ export default function GraphView({ subgraph, label }: Props) {
         return;
       }
       cyRef.current.add([...nodeEls, ...newEdgeEls]);
+      // Re-read the live counts so the caption reflects the grown graph.
+      setCounts({ nodes: cyRef.current.nodes().length, edges: cyRef.current.edges().length });
       cyRef.current.layout({ name: "cose", animate: true, nodeRepulsion: 8000, idealEdgeLength: 80 }).run();
       cyRef.current.fit(undefined, 50);
     } catch (err) {
@@ -312,7 +321,7 @@ export default function GraphView({ subgraph, label }: Props) {
           <span className="plate-corner br" />
           <div ref={containerRef} id="cy" />
           <div className="plate-caption">
-            {subgraph.nodes.length} nodes · {subgraph.edges.length} edges
+            {counts ? `${counts.nodes} nodes · ${counts.edges} edges` : `${subgraph.nodes.length} nodes · ${subgraph.edges.length} edges`}
           </div>
         </div>
       ) : (

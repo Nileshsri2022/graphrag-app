@@ -368,7 +368,7 @@ export default function App() {
           {!searching && !searchError && searched && (
             <>
               <div className="results-head">
-                <h2>{answerLabel ? `Results for “${answerLabel}”` : "Results"}</h2>
+                <h2>{answerLabel ? `Results for ${answerLabel}` : "Results"}</h2>
                 <span className="results-count">
                   {shownCards.length} {shownCards.length === 1 ? "tool" : "tools"}
                 </span>
