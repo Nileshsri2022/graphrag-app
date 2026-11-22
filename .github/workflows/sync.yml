@@ -54,7 +54,7 @@ jobs:
         # run re-fetched all 673 lists. `|| true`: first run has no cache yet.
         run: |
           cd worker
-          npx wrangler r2 object get graphrag-data/cache/awesome_cache.json --file=../scripts/.awesome_cache.json || true
+          npx wrangler r2 object get graphrag-data/cache/awesome_cache.json --file=../scripts/.awesome_cache.json --remote || true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -99,7 +99,7 @@ jobs:
         # even if a later step (index, validation, deploy) fails.
         run: |
           cd worker
-          npx wrangler r2 object put graphrag-data/cache/awesome_cache.json --file=../scripts/.awesome_cache.json
+          npx wrangler r2 object put graphrag-data/cache/awesome_cache.json --file=../scripts/.awesome_cache.json --remote
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -163,10 +163,10 @@ jobs:
       - name: Upload shards to R2
         run: |
           cd worker
-          npx wrangler r2 object put graphrag-data/catalog.json --file=../data/shards/catalog.json
-          npx wrangler r2 object put graphrag-data/termmap.json --file=../data/shards/termmap.json
+          npx wrangler r2 object put graphrag-data/catalog.json --file=../data/shards/catalog.json --remote
+          npx wrangler r2 object put graphrag-data/termmap.json --file=../data/shards/termmap.json --remote
           for f in ../data/shards/shards/*.json; do
-            npx wrangler r2 object put "graphrag-data/shards/$(basename "$f")" --file="$f"
+            npx wrangler r2 object put "graphrag-data/shards/$(basename "$f")" --file="$f" --remote
           done
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
