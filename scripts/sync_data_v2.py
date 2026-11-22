@@ -40,13 +40,12 @@ THREADS = 8
 MAX_FILE_BYTES = 1_000_000  # package.json size cap (C3)
 MAX_DEPS_PER_REPO = 200
 MAX_TOPICS_PER_REPO = 50
-MAX_ITEMS_PER_REPO = 400  # cap for awesome-list README entries
+MAX_ITEMS_PER_REPO = 1000  # cap for awesome-list README entries (raised from 400:
+# the biggest lists — awesome-python/nodejs/ios — have 400-700 entries and were
+# truncated; 675 lists at realistic sizes stay well under the 50k-node global cap,
+# which still guards the merge in sync_awesome.py)
 ITEM_TITLE_MAX = 120
 ITEM_URL_MAX = 300
-
-if not TOKEN:
-    print("FATAL: GITHUB_TOKEN env var required (GITHUB_TOKEN=$(gh auth token) python sync_data_v2.py)")
-    sys.exit(1)
 
 import openpyxl  # noqa: E402
 
@@ -233,6 +232,17 @@ def enrich_one(full_name: str) -> dict:
 
 
 def main() -> None:
+    # Token check lives here (not at import time) so other scripts can
+    # import parse_awesome_entries() etc. without a token set.
+    if not TOKEN:
+        print("FATAL: GITHUB_TOKEN env var required (GITHUB_TOKEN=$(gh auth token) python sync_data_v2.py)")
+        sys.exit(1)
+    if not XLSX.exists():
+        # The xlsx snapshot lives outside the repo (not committed, per README);
+        # in CI it is absent by design. Skip v2 enrichment — the awesome layer
+        # (sync_awesome.py) builds the graph from worker/data/graph.json instead.
+        print("xlsx not present — skipping v2 enrichment (nothing to enrich)")
+        return
     repos = read_v1_repos()
     print(f"repos: {len(repos)}", flush=True)
 

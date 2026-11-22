@@ -9,12 +9,22 @@ type Props = {
 };
 
 function nodeStyle(type: string): Record<string, unknown> {
+  if (type === "list") {
+    return {
+      shape: "square",
+      width: 26,
+      height: 26,
+      "background-color": "#a3e635",
+      label: "data(name)",
+      "font-size": 8,
+    };
+  }
   if (type === "topic") {
     return {
       shape: "diamond",
       width: 22,
       height: 22,
-      "background-color": "#D9B35A",
+      "background-color": "#e7c9ff",
       label: "data(name)",
     };
   }
@@ -23,7 +33,7 @@ function nodeStyle(type: string): Record<string, unknown> {
       shape: "hexagon",
       width: 24,
       height: 24,
-      "background-color": "#74B28F",
+      "background-color": "#84cc16",
       label: "data(name)",
     };
   }
@@ -32,7 +42,7 @@ function nodeStyle(type: string): Record<string, unknown> {
       shape: "round-rectangle",
       width: 26,
       height: 18,
-      "background-color": "#E06E78",
+      "background-color": "#ffb4ab",
       label: "data(name)",
       "font-size": 8,
     };
@@ -42,7 +52,7 @@ function nodeStyle(type: string): Record<string, unknown> {
       shape: "triangle",
       width: 20,
       height: 20,
-      "background-color": "#C792EA",
+      "background-color": "#c1cab0",
       label: "data(name)",
       "font-size": 7,
     };
@@ -52,9 +62,9 @@ function nodeStyle(type: string): Record<string, unknown> {
       shape: "round-rectangle",
       width: 30,
       height: 16,
-      "background-color": "#8B8296",
+      "background-color": "#8b947d",
       "border-width": 1,
-      "border-color": "#B9B2C3",
+      "border-color": "#c1cab0",
       label: "data(name)",
       "font-size": 7,
     };
@@ -63,7 +73,7 @@ function nodeStyle(type: string): Record<string, unknown> {
     shape: "ellipse",
     width: 30,
     height: 30,
-    "background-color": "#7FA6CC",
+    "background-color": "#7bd0ff",
     label: "data(label)",
     "font-size": 9,
     "text-wrap": "wrap",
@@ -112,17 +122,21 @@ export default function GraphView({ subgraph, label }: Props) {
           selector: "node",
           style: {
             label: "data(label)",
-            color: "#F2EEE7",
-            "font-family": "Inter, sans-serif",
+            color: "#dfe2eb",
+            "font-family": "Geist, Inter, sans-serif",
             "border-width": 1,
-            "border-color": "#322D38",
+            "border-color": "#424936",
             "text-outline-width": 4,
-            "text-outline-color": "#131116",
+            "text-outline-color": "#080b10",
           },
         },
         {
           selector: "node[type = 'repo']",
           style: nodeStyle("repo"),
+        },
+        {
+          selector: "node[type = 'list']",
+          style: nodeStyle("list"),
         },
         {
           selector: "node[type = 'topic']",
@@ -148,8 +162,8 @@ export default function GraphView({ subgraph, label }: Props) {
           selector: "edge",
           style: {
             width: 1.5,
-            "line-color": "#4A4352",
-            "target-arrow-color": "#4A4352",
+            "line-color": "#424936",
+            "target-arrow-color": "#424936",
             "target-arrow-shape": "triangle",
             "curve-style": "bezier",
             opacity: 0.6,
@@ -157,31 +171,31 @@ export default function GraphView({ subgraph, label }: Props) {
         },
         {
           selector: "edge[type = 'HAS_TOPIC']",
-          style: { "line-color": "#D9B35A", "target-arrow-color": "#D9B35A" },
+          style: { "line-color": "#e7c9ff", "target-arrow-color": "#e7c9ff" },
         },
         {
           selector: "edge[type = 'HAS_LANGUAGE']",
-          style: { "line-color": "#74B28F", "target-arrow-color": "#74B28F" },
+          style: { "line-color": "#84cc16", "target-arrow-color": "#84cc16" },
         },
         {
           selector: "edge[type = 'DEPENDS_ON']",
-          style: { "line-color": "#E06E78", "target-arrow-color": "#E06E78", width: 2.5 },
+          style: { "line-color": "#ffb4ab", "target-arrow-color": "#ffb4ab", width: 2.5 },
         },
         {
           selector: "edge[type = 'DEPENDS_ON_PKG']",
-          style: { "line-color": "#E06E78", "target-arrow-color": "#E06E78", "line-style": "dashed" },
+          style: { "line-color": "#ffb4ab", "target-arrow-color": "#ffb4ab", "line-style": "dashed" },
         },
         {
           selector: "edge[type = 'CONTRIBUTED_BY']",
-          style: { "line-color": "#C792EA", "target-arrow-color": "#C792EA", "line-style": "dotted" },
+          style: { "line-color": "#c1cab0", "target-arrow-color": "#c1cab0", "line-style": "dotted" },
         },
         {
           selector: "edge[type = 'LISTED_IN']",
-          style: { "line-color": "#E09A5B", "target-arrow-shape": "none", "line-style": "dashed", opacity: 0.7 },
+          style: { "line-color": "#84cc16", "target-arrow-shape": "none", "line-style": "dashed", opacity: 0.7 },
         },
         {
           selector: "node:selected",
-          style: { "border-width": 3, "border-color": "#F2EEE7" },
+          style: { "border-width": 3, "border-color": "#dfe2eb" },
         },
       ],
       layout: { name: "cose", animate: false, nodeRepulsion: 8000, idealEdgeLength: 80 },
@@ -190,14 +204,14 @@ export default function GraphView({ subgraph, label }: Props) {
     cy.on("tap", "node", (evt) => {
       const node = evt.target;
       const data = node.data();
-      if (data.type === "repo" || data.type === "item") {
+      if (data.type === "repo" || data.type === "item" || data.type === "list") {
         setHovered({ fullName: data.fullName ?? data.name, kind: data.type, stars: data.stars, language: data.language, description: data.description, url: data.url });
       }
     });
 
     cy.on("mouseover", "node", (evt) => {
       const data = evt.target.data();
-      if (data.type === "repo" || data.type === "item") {
+      if (data.type === "repo" || data.type === "item" || data.type === "list") {
         setHovered({ fullName: data.fullName ?? data.name, kind: data.type, stars: data.stars, language: data.language, description: data.description, url: data.url });
       }
     });
@@ -245,7 +259,7 @@ export default function GraphView({ subgraph, label }: Props) {
         <CompareTable subgraph={subgraph} label={label} />
       )}
       <div className="graph-toolbar">
-        <span className="graph-label">{label || "No query yet — ask below"}</span>
+        <span className="graph-label">{label || "Run a search to load the subgraph"}</span>
         <span className="spacer" />
         <span className="toolbtn-group">
           <button className="btn" title="Fit to view" onClick={() => cyRef.current?.fit(undefined, 50)}>Fit</button>
@@ -283,7 +297,7 @@ export default function GraphView({ subgraph, label }: Props) {
             <path d="M82 40 L46 76" stroke="var(--g-dep)" strokeWidth="1.6" strokeDasharray="3 3" />
             <path d="M100 42 L136 74" stroke="var(--g-edge)" strokeWidth="1.6" />
             <text x="90" y="112" textAnchor="middle" fontSize="11" fill="var(--dim)" fontFamily="Inter, sans-serif">
-              Ask a question to load the subgraph
+              Run a search, then explore the subgraph
             </text>
           </svg>
         </div>
@@ -293,10 +307,12 @@ export default function GraphView({ subgraph, label }: Props) {
           <h4>Legend</h4>
           <div className="legend-section">
             <div className="lg-item"><span className="lg-swatch" style={{ color: "var(--g-repo)" }}>●</span> repo</div>
+            <div className="lg-item"><span className="lg-swatch" style={{ color: "var(--g-list)" }}>■</span> list</div>
             <div className="lg-item"><span className="lg-swatch" style={{ color: "var(--g-topic)" }}>◆</span> topic</div>
             <div className="lg-item"><span className="lg-swatch" style={{ color: "var(--g-lang)" }}>⬢</span> language</div>
             <div className="lg-item"><span className="lg-swatch" style={{ color: "var(--g-pkg)" }}>▭</span> package</div>
             <div className="lg-item"><span className="lg-swatch" style={{ color: "var(--g-contrib)" }}>▲</span> contributor</div>
+            <div className="lg-item"><span className="lg-swatch" style={{ color: "var(--g-item)" }}>▭</span> item</div>
           </div>
           <div className="legend-section edges">
             <div className="lg-item"><span className="lg-swatch" style={{ color: "var(--g-dep)" }}>─</span> depends on</div>

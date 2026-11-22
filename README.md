@@ -54,6 +54,94 @@ cd ../worker && npx wrangler dev --port 8787 --var ALLOW_LOCAL_LLM:1
 # SPA Settings → Base URL http://127.0.0.1:9999/v1, key anything, model anything
 ```
 
+## Data pipeline (v2): awesome knowledge base
+
+The knowledge base is the [awesome](https://github.com/Nileshsri2022/awesome)
+README — 675 list entries in 28 sections — plus the items *inside* each list.
+`scripts/sync_data_v2.py` builds the base graph (sindresorhus repos,
+topics, deps, contributors) when the `reports/sindresorhus_repos.xlsx`
+snapshot is present (maintainer's machine only — it is not committed, so in
+CI that step skips and the base is the checked-in `worker/data/graph.json`);
+`scripts/sync_awesome.py` then merges the awesome layer on top of it. The full sync runs in GitHub Actions
+(`.github/workflows/sync.yml`, daily 04:00 UTC) with `GITHUB_TOKEN`; nothing
+in the pipeline needs a paid service.
+
+### Running the awesome sync
+
+```bash
+cd scripts
+# Sample run (no token needed for a handful of lists; unauthenticated
+# GitHub REST = 60 req/hr — do NOT loop-retry on 429, the script stops
+# fetching and builds from what it has):
+python3 sync_awesome.py --max-lists 5
+# → writes scripts/sample-output/sample-graph.json (never touches the
+#   real data/graph.json)
+
+# Target one list (e.g. to check a known item):
+python3 sync_awesome.py --only-list vinta/awesome-python --max-lists 1
+
+# Full run (writes <repo>/data/graph.json; needs GITHUB_TOKEN):
+GITHUB_TOKEN=... python3 sync_awesome.py --full
+# By default the awesome README is read from ~/workspace/awesome-readme.md;
+# pass --readme PATH to use another copy (Actions downloads it via the API).
+```
+
+Cache & resume: fetched list READMEs + repo metadata are cached in
+`scripts/.awesome_cache.json` (keyed by repo `fullName`, git-ignored; in
+Actions it is persisted with `actions/cache`). Reruns only fetch what is
+missing; cached entries older than 7 days are refetched. On HTTP 429 the
+script stops fetching immediately, keeps the cache, builds the graph from
+fetched data, records the rest in `meta.skippedLists`, and exits 0. A list
+whose README cannot be fetched is skipped the same way — the sync never
+fails as a whole because of one list. Hard caps: nodes < 50,000,
+edges < 100,000.
+
+### Freshness + rating (1–5, computed at sync time)
+
+Every list repo and every item that links to a GitHub repo gets a `rating`
+(1–5), a `freshness` (`fresh` | `stale` | `outdated`), and a
+`lastActivity` date (pushedAt, else updatedAt) on its node. The rubric —
+"how much used in the current era" — is implemented in
+`scripts/rating.py` (`rate_repo()`) and mirrored in the worker's TypeScript
+(the two must agree):
+
+| Rating | Meaning |
+|---|---|
+| 5 | Active < 6 months **and** ≥ 1,000 stars — widely used. Stars alone never give 5; activity is required. |
+| 4 | Active < 1 year, strong adoption (< 6 mo but < 1,000 stars also lands here). |
+| 3 | Niche but alive / declining — activity 1–2 years. |
+| 2 | 2–4 years no activity, superseded; also the rating when no activity date exists. |
+| 1 | 4+ years no activity, or archived (archived is always 1). |
+
+Freshness: < 12 months → `fresh`; 12–48 months → `stale`; ≥ 48 months or
+archived → `outdated`. When an item's own GitHub metadata cannot be
+resolved (batched GraphQL lookup, max 50/query, 5,000 lookups/run; it
+needs a token), the item inherits its parent list's rating/freshness.
+
+### Semantic search: TF-IDF (no embeddings, on purpose)
+
+`scripts/build_search_index.py` builds a TF-IDF inverted index over item +
+repo + list node names and descriptions and writes
+`worker/data/search.json` (format: `{"version": 1, "terms": {term: {idf,
+postings: [[nodeId, weight], ...]}}, "norms": {nodeId: float}}`).
+Weight is `(1 + ln(tf)) * idf`, `idf = ln(1 + N/df)`; postings are sorted
+by weight, capped at 50 per term; terms with df < 2 are dropped unless they
+appear in a node's name. The file is trimmed until it fits the 500 KB
+budget (current graph: ~2,261 terms, ~349 KB). The worker ranks by TF-IDF
+cosine similarity plus synonym expansion — "meaning-based" search with
+zero per-query cost.
+
+Neural embeddings are **deliberately deferred**: ~20k items would exceed
+the Workers AI free allowance (10k neurons/day) in a single build, and
+there is no paid service in this project. Do not "upgrade" the index to
+embeddings without a free-tier budget that covers a full rebuild.
+
+```bash
+cd scripts
+python3 build_search_index.py [graph.json] [--out search.json]
+# defaults: ../worker/data/graph.json → ../worker/data/search.json
+```
+
 ## Deploy (zero cost)
 
 ### 1. Cloudflare Worker
@@ -140,7 +228,7 @@ sends its own key, and the base URL is pinned to known providers unless
 
 ```
 graphrag-app/
-├─ scripts/            sync_data.py · mock_llm.py · .venv/
+├─ scripts/            sync_data.py · sync_data_v2.py · sync_awesome.py · rating.py · build_search_index.py · mock_llm.py · .venv/
 ├─ data/               graph.json (generated snapshot)
 ├─ worker/             Cloudflare Worker (TypeScript)
 ├─ frontend/           Vite + React + Cytoscape SPA

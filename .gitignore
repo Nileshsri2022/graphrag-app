@@ -18,3 +18,5 @@ dev-dist/
 .vscode/
 .idea/
 scripts/.v2_cache.json
+scripts/.awesome_cache.json
+scripts/sample-output/

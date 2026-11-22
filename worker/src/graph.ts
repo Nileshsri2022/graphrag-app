@@ -4,7 +4,7 @@ import graphData from "../data/graph.json";
 
 export type Node = {
   id: string;
-  type: "repo" | "language" | "topic" | "package" | "contributor" | "item";
+  type: "repo" | "language" | "topic" | "package" | "contributor" | "item" | "list";
   name?: string;
   fullName?: string;
   description?: string;
@@ -16,6 +16,13 @@ export type Node = {
   isFork?: boolean;
   url?: string;
   homepage?: string;
+  pushedAt?: string;
+  // v2 (DESIGN-v2.md §3): stored at sync time; absent on pre-v2 nodes.
+  rating?: number;
+  freshness?: "fresh" | "stale" | "outdated";
+  lastActivity?: string;
+  // v2 list nodes (DESIGN-v2.md §1): the awesome README section the list sits in.
+  section?: string;
 };
 
 export type EdgeType = "HAS_LANGUAGE" | "HAS_TOPIC" | "DEPENDS_ON" | "DEPENDS_ON_PKG" | "CONTRIBUTED_BY" | "LISTED_IN";
@@ -65,6 +72,76 @@ export function neighbors(id: string, max = 50): { node: Node; via: Edge }[] {
 
 export function allRepos(): Node[] {
   return NODES.filter((n) => n.type === "repo");
+}
+
+/** All awesome-list nodes (type "list", v2 graph only; empty on the current graph). */
+export function allLists(): Node[] {
+  return NODES.filter((n) => n.type === "list");
+}
+
+/** All item nodes (tools listed inside a list/repo). */
+export function allItems(): Node[] {
+  return NODES.filter((n) => n.type === "item");
+}
+
+/** Items listed in the given list (LISTED_IN edges: item -> list). */
+export function itemsOfList(listId: string): Node[] {
+  const ids = (inEdges.get(listId) ?? [])
+    .filter((e) => e.type === "LISTED_IN")
+    .map((e) => e.source);
+  return ids.map((id) => byId.get(id)!).filter(Boolean);
+}
+
+/** The list (or, on the pre-v2 graph, the repo) an item is listed in, if any. */
+export function listOfItem(itemId: string): Node | undefined {
+  const ids = (outEdges.get(itemId) ?? [])
+    .filter((e) => e.type === "LISTED_IN")
+    .map((e) => e.target);
+  const first = ids[0];
+  return first ? byId.get(first) : undefined;
+}
+
+/**
+ * Category counts for the filter bar (DESIGN-v2.md §6).
+ * From list nodes' `section` field when lists exist. When the graph has no
+ * list nodes yet (current graph), falls back to the top 12 topics by repo count.
+ */
+export function sectionsWithCounts(): { name: string; listCount: number; itemCount: number }[] {
+  const lists = allLists();
+  if (lists.length === 0) {
+    const counts = new Map<string, number>();
+    for (const [id, edges] of inEdges) {
+      if (!id.startsWith("topic:")) continue;
+      const c = edges.filter((e) => e.type === "HAS_TOPIC").length;
+      if (c > 0) counts.set(id, c);
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 12)
+      .map(([id, count]) => ({
+        name: byId.get(id)?.name ?? id.replace(/^topic:/, ""),
+        listCount: 0,
+        itemCount: count,
+      }));
+  }
+  const bySection = new Map<string, { listCount: number; itemCount: number }>();
+  const sectionOfList = new Map<string, string>();
+  for (const l of lists) {
+    const s = l.section ?? "Other";
+    sectionOfList.set(l.id, s);
+    const entry = bySection.get(s) ?? { listCount: 0, itemCount: 0 };
+    entry.listCount += 1;
+    bySection.set(s, entry);
+  }
+  for (const e of EDGES) {
+    if (e.type !== "LISTED_IN") continue;
+    const s = sectionOfList.get(e.target);
+    if (!s) continue;
+    bySection.get(s)!.itemCount += 1;
+  }
+  return [...bySection.entries()]
+    .map(([name, c]) => ({ name, listCount: c.listCount, itemCount: c.itemCount }))
+    .sort((a, b) => b.itemCount - a.itemCount || b.listCount - a.listCount || a.name.localeCompare(b.name));
 }
 
 export function reposWithTopic(topic: string): Node[] {
