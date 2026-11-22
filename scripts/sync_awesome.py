@@ -36,6 +36,13 @@ token (GraphQL requires auth) or on failure/miss, an item inherits its
 parent list's rating/freshness. GraphQL payload errors are logged (the
 old code silently ignored them, which hid why item lookups returned 0).
 
+Item metadata is cached in scripts/.item_cache.json (same 7-day TTL as
+the list cache), keyed by repo fullName. A warm cache resolves only
+new/stale items via GraphQL; fresh entries are reused. A missing or
+corrupt item cache is treated as empty -- the run resolves everything
+and rebuilds it. On a GraphQL rate limit the fresh cached entries are
+still used; only uncached items inherit parent signals.
+
 Pre-flight rate-limit check: before fetching, the script reads the core
 REST budget (GET /rate_limit, free) and exits non-zero if it cannot cover
 the lists that need fetching, instead of fetching a few and building a
@@ -73,6 +80,7 @@ ROOT = HERE.parent
 DEFAULT_README = Path.home() / "workspace" / "awesome-readme.md"
 DEFAULT_BASE = ROOT / "worker" / "data" / "graph.json"
 CACHE_PATH = HERE / ".awesome_cache.json"
+ITEM_CACHE_PATH = HERE / ".item_cache.json"
 API = "https://api.github.com"
 TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
 MAX_NODES = 100_000
@@ -364,6 +372,86 @@ def save_cache(cache):
                           encoding="utf-8")
 
 
+def load_item_cache():
+    """Load the item-metadata cache ({} if missing/corrupt).
+
+    Mirrors load_cache: a corrupt file is treated as empty, never a
+    crash -- the run resolves everything and rebuilds the cache.
+    """
+    if ITEM_CACHE_PATH.exists():
+        try:
+            data = json.loads(ITEM_CACHE_PATH.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception:  # noqa: BLE001
+            return {}
+    return {}
+
+
+def save_item_cache(cache):
+    ITEM_CACHE_PATH.write_text(json.dumps(cache, ensure_ascii=False),
+                               encoding="utf-8")
+
+
+def item_cache_fresh(entry):
+    """A cached item-metadata entry is usable only if it has the
+    required fields (stars, archived) and is younger than
+    CACHE_TTL_DAYS. Mirrors cache_fresh for the list cache, but item
+    entries carry no README. archived/stars may be falsy (False/0),
+    so key presence is checked, not truthiness."""
+    if not isinstance(entry, dict):
+        return False
+    if "stars" not in entry or "archived" not in entry:
+        return False
+    try:
+        fetched = datetime.strptime(entry.get("fetchedAt", ""),
+                                    "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return False
+    return (datetime.now(timezone.utc).replace(tzinfo=None) - fetched).days < CACHE_TTL_DAYS
+
+
+def resolve_item_meta(item_repo_names, item_cache):
+    """Resolve item metadata, using the item cache for fresh entries.
+
+    item_cache: dict keyed by repo fullName; values are meta dicts in
+    the graphql_item_meta shape (stars, archived, pushedAt, updatedAt)
+    plus a "fetchedAt" timestamp. Fresh entries (within
+    CACHE_TTL_DAYS) are used as-is; missing/stale entries are resolved
+    via the existing batched GraphQL and written back into item_cache
+    (with fetchedAt=now). The caller saves the cache. Returns
+    (item_meta, resolved_count) where item_meta merges cached +
+    newly resolved entries. On RateLimited the fresh cached entries
+    are still returned (resilience); only uncached items inherit
+    parent signals, exactly as before.
+    """
+    unique = sorted(set(item_repo_names))
+    cached = {}
+    to_resolve = []
+    for fn in unique:
+        entry = item_cache.get(fn)
+        if item_cache_fresh(entry):
+            cached[fn] = {k: entry[k] for k in
+                          ("stars", "archived", "pushedAt", "updatedAt")
+                          if k in entry}
+        else:
+            to_resolve.append(fn)
+    log(f"item cache: {len(cached)} fresh, {len(to_resolve)} to resolve "
+        "via GraphQL")
+    new_meta = {}
+    if to_resolve:
+        try:
+            new_meta = graphql_item_meta(to_resolve)
+        except RateLimited:
+            log("RATE LIMITED during GraphQL -- items inherit parent "
+                "signals")
+            new_meta = {}
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    for fn, meta in new_meta.items():
+        item_cache[fn] = {**meta, "fetchedAt": now}
+    item_meta = {**cached, **new_meta}
+    return item_meta, len(new_meta)
+
+
 def core_rate_remaining():
     """Remaining core REST budget, or None if it cannot be read.
 
@@ -516,7 +604,10 @@ def main():
             f"pushedAt={meta['pushedAt']}")
     log(f"lists fetched: {len(fetched_lists)}, skipped: {len(skipped)}")
 
-    # ---- 3. item GitHub metadata (batched GraphQL, capped) ----
+    # ---- 3. item GitHub metadata (item cache + batched GraphQL) ----
+    # Fresh cached entries are reused; only new/stale items are resolved
+    # via GraphQL (same cap as before). The cache is saved right after
+    # the resolution so a later failure does not lose it.
     item_repo_names = []
     for fn, data in fetched_lists.items():
         for item in data["items"]:
@@ -524,12 +615,12 @@ def main():
             if repo:
                 item_repo_names.append(repo)
     log(f"item GitHub repos to resolve: {len(set(item_repo_names))} unique")
-    item_meta = {}
-    try:
-        item_meta = graphql_item_meta(item_repo_names)
-    except RateLimited:
-        log("RATE LIMITED during GraphQL -- items inherit parent signals")
-    log(f"item repos resolved via GraphQL: {len(item_meta)}")
+    item_cache = load_item_cache()
+    item_meta, resolved_new = resolve_item_meta(item_repo_names,
+                                                 item_cache)
+    save_item_cache(item_cache)
+    log(f"item repos resolved via GraphQL: {resolved_new} "
+        f"(+ {len(item_meta) - resolved_new} from cache)")
 
     # ---- 4. merge into a copy of the base graph ----
     base = json.loads(Path(args.base).read_text(encoding="utf-8"))

@@ -19,4 +19,5 @@ dev-dist/
 .idea/
 scripts/.v2_cache.json
 scripts/.awesome_cache.json
+scripts/.item_cache.json
 scripts/sample-output/
