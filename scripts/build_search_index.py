@@ -13,9 +13,9 @@ norms = sqrt(sum of squared weights) per doc. Postings sorted desc by
 weight, max 50 per term. Terms with df < 2 are dropped UNLESS the term
 appears in a node's name.
 
-Size cap: search.json MUST be <= 10 MB. The index lives in Cloudflare R2
+Size cap: search.json MUST be <= 20 MB. The index lives in Cloudflare R2
 now (not in the Worker bundle), so the old 500 KB bundle budget no longer
-applies; 10 MB is a sanity cap. The builder trims (lower postings cap, then
+applies; 20 MB is a sanity cap. The builder trims (lower postings cap, then
 drops low-idf terms) until it fits.
 
 Usage: python3 build_search_index.py [graph.json] [--out search.json]
@@ -35,7 +35,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 DEFAULT_GRAPH = HERE.parent / "data" / "graph.json"
 DEFAULT_OUT = HERE.parent / "data" / "search.json"
-MAX_BYTES = 10 * 1024 * 1024  # 10 MB sanity cap (R2, not a bundle budget)
+MAX_BYTES = 20 * 1024 * 1024  # 20 MB sanity cap (R2, not a bundle budget)
 MAX_POSTINGS = 50
 
 STOPWORDS = {

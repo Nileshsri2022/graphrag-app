@@ -28,7 +28,7 @@ lookups (aliases, max 50/query), capped at 5000 lookups per run. Without a
 token (GraphQL requires auth) or on failure/miss, an item inherits its
 parent list's rating/freshness.
 
-Hard caps: nodes < 50,000, edges < 100,000. A list whose README cannot be
+Hard caps: nodes < 100,000, edges < 200,000. A list whose README cannot be
 fetched is skipped and recorded in meta.skippedLists -- the sync never
 fails as a whole because of one list.
 
@@ -62,8 +62,8 @@ DEFAULT_BASE = ROOT / "worker" / "data" / "graph.json"
 CACHE_PATH = HERE / ".awesome_cache.json"
 API = "https://api.github.com"
 TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
-MAX_NODES = 50_000
-MAX_EDGES = 100_000
+MAX_NODES = 100_000
+MAX_EDGES = 200_000
 GRAPHQL_BATCH = 50
 GRAPHQL_CAP = 5000
 ITEM_URL_MAX = 300
