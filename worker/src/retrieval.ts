@@ -21,7 +21,15 @@ import {
   type Subgraph,
 } from "./graph";
 import { compareRanked, nodeRating } from "./rating";
+import { bm25Search, bm25SearchSharded } from "./bm25";
 import { buildWhyText, queryTerms, tfidfSearch, tfidfSearchSharded, type TfIdfIndex } from "./tfidf";
+
+/** Lexical ranker for the answer path. "bm25" is the default (it beat
+ *  TF-IDF on the search benchmark, 2026-11-23: P@10 0.100 vs 0.083,
+ *  MRR 0.209 vs 0.182, local Worker, same 24 queries). "tfidf" is the
+ *  baseline. BM25 is only used when its data is loaded — otherwise
+ *  answerCards falls back to TF-IDF for that query. */
+export type Ranker = "tfidf" | "bm25";
 
 export type RetrievalResult = {
   subgraph: Subgraph;
@@ -401,21 +409,28 @@ function toCard(node: Node, rank: number, terms: string[]): AnswerCard {
 }
 
 /**
- * No-key answer path: template retrieval + TF-IDF hits + item name/description
- * matches, merged and deduped by id (TF-IDF-only hits appended after template
- * hits), then ranked. Items whose name/description matches the query surface
- * FIRST (the awesome layer is the point); repos follow, sorted by compareRanked.
- * Within the item group, match strength (distinct content terms, then TF-IDF
- * score) breaks the ties compareRanked alone cannot — pre-v2 items carry no
- * dates/stars, so without it the order would be arbitrary graph order.
+ * No-key answer path: template retrieval + lexical hits + item
+ * name/description matches, merged and deduped by id (lexical-only hits
+ * appended after template hits), then ranked. Items whose
+ * name/description matches the query surface FIRST (the awesome layer is
+ * the point); repos follow, sorted by compareRanked.
+ * Within the item group, match strength (distinct content terms, then the
+ * lexical ranker's score) breaks the ties compareRanked alone cannot —
+ * pre-v2 items carry no dates/stars, so without it the order would be
+ * arbitrary graph order.
  * Pass an explicit TF-IDF index to override the loaded search.json index
- * (null disables TF-IDF); undefined uses the loaded index (global, or the
- * aggregate across loaded shard indexes in sharded mode).
+ * (null disables lexical search); undefined uses the loaded index
+ * (global, or the aggregate across loaded shard indexes in sharded mode).
+ * `ranker` selects the lexical ranker ("bm25" default — the benchmark
+ * winner; "tfidf" is the baseline). BM25 is only used when its
+ * docLens/avgdl data is loaded — otherwise the query falls back to
+ * TF-IDF, so an old shard layout can never break the answer path).
  */
 export function answerCards(
   question: string,
   limit = 10,
   tfidfIndex?: TfIdfIndex | null,
+  ranker: Ranker = "bm25",
 ): { label: string; cards: AnswerCard[] } {
   const q = question.trim();
   const terms = queryTerms(q);
@@ -424,10 +439,20 @@ export function answerCards(
 
   const seen = new Map<string, Node>();
   for (const s of ret.sources) seen.set(s.id, s);
-  const tfidfScores = new Map<string, number>();
-  const hits = tfidfIndex === undefined ? tfidfSearchSharded(q, 20) : tfidfSearch(q, 20, tfidfIndex);
+  const rankerScores = new Map<string, number>();
+  const useBm25 = ranker === "bm25";
+  let hits = useBm25
+    ? (tfidfIndex === undefined ? bm25SearchSharded(q, 20) : bm25Search(tfidfIndex, q, 20))
+    : (tfidfIndex === undefined ? tfidfSearchSharded(q, 20) : tfidfSearch(q, 20, tfidfIndex));
+  if (useBm25 && hits.length === 0) {
+    // BM25 data unavailable for the loaded index (old shards / legacy
+    // search.json), or genuinely no hits — TF-IDF is the safe fallback
+    // either way (it shares the same postings, so it finds nothing extra
+    // when BM25 truly has no hits).
+    hits = tfidfIndex === undefined ? tfidfSearchSharded(q, 20) : tfidfSearch(q, 20, tfidfIndex);
+  }
   for (const hit of hits) {
-    tfidfScores.set(hit.id, hit.score);
+    rankerScores.set(hit.id, hit.score);
     if (seen.has(hit.id)) continue;
     const n = getNode(hit.id);
     if (n) seen.set(n.id, n);
@@ -452,7 +477,7 @@ export function answerCards(
     .sort(
       (a, b) =>
         matchCount(b) - matchCount(a) ||
-        (tfidfScores.get(b.id) ?? 0) - (tfidfScores.get(a.id) ?? 0) ||
+        (rankerScores.get(b.id) ?? 0) - (rankerScores.get(a.id) ?? 0) ||
         compareRanked(a, b),
     );
   const rest = all.filter((n) => !(n.type === "item" && matchesQuery(n))).sort(compareRanked);

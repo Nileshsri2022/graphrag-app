@@ -13,6 +13,15 @@ and emits, under data/shards/:
          v1-style item -> repo edges for those items)
        + per-section TF-IDF index (global idf, postings capped at 20 per
          term per section, norms for docs in this shard)
+       + per-section BM25 data: "docLens" (token count per doc in this
+         shard, same tokenization as build_search_index.py) and "avgdl"
+         (global average doc length across ALL docs). The Worker needs
+         these for length-normalised BM25; they are NOT derivable from
+         the TF-IDF weights alone (weights conflate tf with idf, and
+         norms are L2 weight norms, not token counts). The global
+         search.json is NOT given docLens (it would push it over its
+         20 MB cap and trigger posting trims); the legacy full-graph
+         path keeps TF-IDF only and BM25 falls back to TF-IDF there.
 
 Inputs are read-only; the builder never edits graph.json / search.json.
 Validation fails the run if: an item is in no shard; the union of shard
@@ -213,6 +222,26 @@ def main():
         for s in doc_sections.get(nid, ()):
             sec_norms[s][nid] = nv
 
+    # BM25 data: per-doc token counts + the global average doc length.
+    # Same tokenization as build_search_index.py (imported, not duplicated,
+    # so the lengths match the index exactly). avgdl is global (all docs)
+    # so BM25 scores stay comparable across shards. docLens is per-section
+    # (only the docs whose norms live in that shard).
+    from build_search_index import doc_text, tokenize
+    doc_lens: dict[str, int] = {}
+    total_len = 0
+    for node in nodes:
+        if node.get("type") not in ("item", "repo", "list"):
+            continue
+        ln = len(tokenize(doc_text(node)))
+        doc_lens[node["id"]] = ln
+        total_len += ln
+    avgdl = round(total_len / len(doc_lens), 4) if doc_lens else 0.0
+    sec_doc_lens: dict[str, dict[str, int]] = {}
+    for s in sections:
+        sec_doc_lens[s] = {nid: doc_lens[nid] for nid in sec_norms.get(s, {})
+                           if nid in doc_lens}
+
     shard_files = {}
     for s in sections:
         its = sec_items.get(s, [])
@@ -236,7 +265,8 @@ def main():
             "section": s,
             "nodes": its + sec_lists,
             "edges": shard_edges,
-            "index": {"version": 1, "terms": tmap, "norms": sec_norms.get(s, {})},
+            "index": {"version": 1, "terms": tmap, "norms": sec_norms.get(s, {}),
+                      "docLens": sec_doc_lens.get(s, {}), "avgdl": avgdl},
         }
         slug = slugify_section(s)
         path = shards_dir / f"{slug}.json"
@@ -309,6 +339,14 @@ def main():
                 break
     if len(shard_files) != len(sections):
         errors.append(f"shard count {len(shard_files)} != section count {len(sections)}")
+    # BM25 data complete: every shard's docLens covers exactly its norms
+    # docs, and the global average doc length is positive.
+    if avgdl <= 0:
+        errors.append("BM25 avgdl is not positive")
+    for s in sections:
+        if set(sec_doc_lens.get(s, {})) != set(sec_norms.get(s, {})):
+            errors.append(f"shard {slugify_section(s)}: docLens keys != norms keys")
+            break
     # term-map covers every term that has >= 1 posting in a sectioned doc
     # (item or list). Terms whose postings are ONLY in repo docs are
     # legitimately absent: repos live in the skeleton and are found via
@@ -336,7 +374,8 @@ def main():
     cat_size = fsize(out_dir / "catalog.json")
     tm_size = fsize(out_dir / "termmap.json")
     total_shard = 0
-    print(f"sections: {len(sections)}  items: {len(items)}  lists: {len(lists)}")
+    print(f"sections: {len(sections)}  items: {len(items)}  lists: {len(lists)}  "
+          f"BM25 avgdl: {avgdl} (docLens in every shard index)")
     print(f"catalog.json: {cat_size/1024:.0f} KB  termmap.json: {tm_size/1024:.0f} KB  "
           f"cold start: {(cat_size + tm_size)/1024:.0f} KB")
     for s in sections:

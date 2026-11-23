@@ -19,7 +19,7 @@
 
 import { catalogSections, catalogTrending, ensureData, ensureSectionsForNode, ensureSectionsForQuery } from "./data";
 import { meta, sectionsWithCounts } from "./graph";
-import { answerCards, expand, formatRelationships, formatSources, retrieve, trending } from "./retrieval";
+import { answerCards, expand, formatRelationships, formatSources, retrieve, trending, type Ranker } from "./retrieval";
 import { chat, defaultConfig, isAllowedProviderHost, itemPromptLine, validateBaseUrl, type LLMConfig } from "./llm";
 import { handleMcp } from "./mcp";
 
@@ -123,10 +123,26 @@ async function handleAnswer(request: Request, env: WorkerEnv): Promise<Response>
     }
     limit = Math.max(1, Math.min(50, Math.floor(rawLimit)));
   }
+  // Lexical ranker: explicit per-request `ranker` ("tfidf" | "bm25"),
+  // else the env default (DEFAULT_RANKER), else "bm25" (the benchmark
+  // winner). An invalid ranker is a 400 — silent fallback would hide a
+  // client bug and make benchmark comparisons unreproducible. "bm25"
+  // with no BM25 data loaded falls back to TF-IDF inside answerCards
+  // (old shards).
+  let ranker: Ranker = "bm25";
+  const rawRanker = (body as { ranker?: unknown }).ranker;
+  if (rawRanker !== undefined) {
+    if (rawRanker !== "tfidf" && rawRanker !== "bm25") {
+      return json({ error: "ranker must be 'tfidf' or 'bm25'" }, 400);
+    }
+    ranker = rawRanker;
+  } else if (env.DEFAULT_RANKER === "bm25" || env.DEFAULT_RANKER === "tfidf") {
+    ranker = env.DEFAULT_RANKER;
+  }
   // Sharded mode: load the sections this question touches before the
   // (synchronous) retrieval runs. No-op on the legacy full-graph path.
   await ensureSectionsForQuery(env, question);
-  return json(answerCards(question, limit));
+  return json(answerCards(question, limit, undefined, ranker));
 }
 
 function handleTrending(): Response {

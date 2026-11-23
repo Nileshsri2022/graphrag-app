@@ -6,7 +6,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "build": "wrangler deploy --dry-run --outdir dist",
-    "test": "tsx test/smoke.test.ts && tsx test/v2.test.ts && tsx test/mcp.test.ts && tsx test/shards.test.ts"
+    "test": "tsx test/smoke.test.ts && tsx test/v2.test.ts && tsx test/mcp.test.ts && tsx test/shards.test.ts && tsx test/bm25.test.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261103.1",
