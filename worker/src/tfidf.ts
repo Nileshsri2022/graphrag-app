@@ -12,6 +12,16 @@ import type { Node } from "./graph";
 export type TfIdfIndex = {
   terms: Record<string, { idf: number; postings: [string, number][] }>;
   norms: Record<string, number>;
+  /**
+   * BM25 data (optional): per-doc token counts + the global average doc
+   * length. Written by scripts/build_shards.py into each shard's index
+   * (docLens covers exactly the docs in that shard's norms; avgdl is
+   * global so BM25 scores stay comparable across shards). Absent in
+   * older indexes (and in the legacy global search.json) -> BM25 is
+   * unavailable for that index and callers fall back to TF-IDF.
+   */
+  docLens?: Record<string, number>;
+  avgdl?: number;
 };
 
 export type TfIdfHit = { id: string; score: number };
@@ -98,7 +108,31 @@ export function parseSearchJson(data: unknown): TfIdfIndex | null {
     if (typeof v !== "number") return null;
     norms[id] = v;
   }
-  return { terms, norms };
+  // BM25 data is optional and lenient: a malformed docLens/avgdl must NOT
+  // break the TF-IDF index (old shards and the legacy search.json have
+  // neither). Only include them when they are fully valid.
+  let docLens: Record<string, number> | undefined;
+  if (d.docLens !== undefined) {
+    if (typeof d.docLens === "object" && d.docLens !== null) {
+      const lens: Record<string, number> = {};
+      let ok = true;
+      for (const [id, v] of Object.entries(d.docLens as Record<string, unknown>)) {
+        if (typeof v !== "number" || !Number.isFinite(v) || v < 0) { ok = false; break; }
+        lens[id] = v;
+      }
+      if (ok) docLens = lens;
+    }
+  }
+  let avgdl: number | undefined;
+  if (typeof d.avgdl === "number" && Number.isFinite(d.avgdl) && d.avgdl > 0) {
+    avgdl = d.avgdl;
+  }
+  // docLens without a positive avgdl (or vice versa) is unusable for BM25.
+  if (docLens === undefined || avgdl === undefined) {
+    docLens = undefined;
+    avgdl = undefined;
+  }
+  return { terms, norms, ...(docLens !== undefined ? { docLens, avgdl } : {}) };
 }
 
 // ---- loader (explicit: the worker calls loadSearchIndex with the R2 object;
@@ -127,6 +161,24 @@ export function resetShardIndexesForTesting(): void {
 /** Slugs of the shard indexes currently loaded. */
 export function loadedShardSlugs(): string[] {
   return [...shardIndexes.keys()];
+}
+
+/**
+ * All loaded indexes for ranking, in the same priority the search
+ * functions use: the shard indexes when sharded, else the single global
+ * index. BM25 (src/bm25.ts) searches this list so it stays in lockstep
+ * with TF-IDF's data (no separate state to drift).
+ */
+export function loadedIndexesForSearch(): TfIdfIndex[] {
+  if (shardIndexes.size > 0) return [...shardIndexes.values()];
+  return loadedIndex ? [loadedIndex] : [];
+}
+
+/** True when at least one loaded index carries BM25 data (docLens + avgdl). */
+export function isBm25DataLoaded(): boolean {
+  return loadedIndexesForSearch().some(
+    (idx) => idx.docLens !== undefined && idx.avgdl !== undefined && idx.avgdl > 0,
+  );
 }
 
 /** Search across every loaded shard index, merged by id (max score wins).
