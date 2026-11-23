@@ -111,17 +111,22 @@ export function parseSearchJson(data: unknown): TfIdfIndex | null {
   // BM25 data is optional and lenient: a malformed docLens/avgdl must NOT
   // break the TF-IDF index (old shards and the legacy search.json have
   // neither). Only include them when they are fully valid.
+  // CPU (2026-11-23): docLens is trusted data written by our own
+  // build_shards.py, so we do NOT validate or copy every entry here.
+  // The old loop cost ~4-19ms per large shard on cold load (17k entries)
+  // and pushed some requests over the Worker's CPU limit (HTTP 503,
+  // error 1102). A non-numeric entry degrades gracefully in bm25Search
+  // (a NaN score fails the s > 0 check, so that doc just loses that
+  // term's contribution) and can never break TF-IDF, which ignores
+  // docLens entirely.
   let docLens: Record<string, number> | undefined;
-  if (d.docLens !== undefined) {
-    if (typeof d.docLens === "object" && d.docLens !== null) {
-      const lens: Record<string, number> = {};
-      let ok = true;
-      for (const [id, v] of Object.entries(d.docLens as Record<string, unknown>)) {
-        if (typeof v !== "number" || !Number.isFinite(v) || v < 0) { ok = false; break; }
-        lens[id] = v;
-      }
-      if (ok) docLens = lens;
-    }
+  if (
+    d.docLens !== undefined &&
+    typeof d.docLens === "object" &&
+    d.docLens !== null &&
+    !Array.isArray(d.docLens)
+  ) {
+    docLens = d.docLens as Record<string, number>;
   }
   let avgdl: number | undefined;
   if (typeof d.avgdl === "number" && Number.isFinite(d.avgdl) && d.avgdl > 0) {

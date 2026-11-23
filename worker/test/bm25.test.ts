@@ -17,7 +17,9 @@ import {
   BM25_K1,
   bm25Search,
   bm25SearchSharded,
+  bm25SearchTerms,
   bm25TermScore,
+  bm25TermScoreWithK1LenNorm,
   isBm25Enabled,
   recoverTf,
 } from "../src/bm25";
@@ -26,6 +28,7 @@ import {
   loadSearchIndex,
   loadShardIndex,
   parseSearchJson,
+  queryTerms,
   resetSearchIndexForTesting,
   searchWithIndex,
   type TfIdfIndex,
@@ -411,6 +414,80 @@ await check("env DEFAULT_RANKER=bm25 applies when the body has no ranker", async
   const body = (await res.json()) as { cards: { id: string }[] };
   assert.ok(body.cards.length > 0);
   assert.equal(body.cards[0]?.id, "item:pytest");
+});
+
+// ---- [8] CPU optimisation (2026-11-23): hoisted lenNorm + docLens passthrough ----
+// The optimisation must not change ranking: the precomputed form must be
+// bit-identical to the direct form, and search results must match exactly.
+
+console.log("\n[8] CPU optimisation: identical scores, identical results");
+
+await check("bm25TermScoreWithK1LenNorm is bit-identical to bm25TermScore", () => {
+  const cases: [number, number, number, number][] = [
+    [1, 2, 11 / 3, 1.0],
+    [2, 2, 11 / 3, 1.0],
+    [10, 2, 11 / 3, 1.0],
+    [1, 8, 11 / 3, 1.0],
+    [3, 5, 10.5566, 3.8777],
+    [1, 1, 10.5566, 0.5],
+    [7, 20, 10.5566, 2.25],
+  ];
+  for (const [tf, len, avgdl, idf] of cases) {
+    const direct = bm25TermScore(tf, len, avgdl, idf);
+    const lenNorm = 1 - BM25_B + (BM25_B * len) / avgdl;
+    const hoisted = bm25TermScoreWithK1LenNorm(tf, BM25_K1 * lenNorm, idf);
+    assert.equal(hoisted, direct, `tf=${tf} len=${len} avgdl=${avgdl} idf=${idf}`);
+  }
+});
+
+await check("bm25SearchTerms returns identical ids+scores to bm25Search", () => {
+  for (const q of ["python", "testing", "python testing", "pytest", "nope"]) {
+    const a = bm25Search(tinyBm25Index, q, 10);
+    const terms = [...new Set(queryTerms(q))];
+    const b = bm25SearchTerms(tinyBm25Index, terms, 10);
+    assert.deepEqual(b, a, `query ${JSON.stringify(q)}`);
+  }
+});
+
+await check("bm25SearchTerms: negative docLen scores 0 for that term (corrupt data)", () => {
+  const bad: TfIdfIndex = {
+    ...tinyBm25Index,
+    docLens: { "item:short": -5, "item:long": 8, "item:other": 1 },
+  };
+  const hits = bm25SearchTerms(bad, ["python"], 10);
+  // item:short contributed 0 for "python"; item:long / item:other still score.
+  assert.ok(!hits.some((h) => h.id === "item:short"), "negative-length doc must not score");
+  assert.ok(hits.some((h) => h.id === "item:long"));
+});
+
+await check("parseSearchJson passes docLens through without per-entry validation", () => {
+  const raw = {
+    version: 1,
+    terms: { python: { idf: 1.0, postings: [["item:a", 1.0]] } },
+    norms: { "item:a": 1.0 },
+    docLens: { "item:a": 4, "item:b": 7 },
+    avgdl: 5.5,
+  };
+  const idx = parseSearchJson(raw);
+  assert.ok(idx !== null);
+  assert.deepEqual(idx?.docLens, { "item:a": 4, "item:b": 7 });
+  assert.equal(idx?.avgdl, 5.5);
+  // Malformed top-level shapes still disable BM25 without breaking TF-IDF.
+  const asArray = parseSearchJson({ ...raw, docLens: [4, 7] });
+  assert.ok(asArray !== null && asArray.docLens === undefined && asArray.avgdl === undefined);
+  const noAvgdl = parseSearchJson({ ...raw, avgdl: undefined });
+  assert.ok(noAvgdl !== null && noAvgdl.docLens === undefined);
+});
+
+await check("bm25SearchSharded matches bm25Search on a single loaded index", () => {
+  resetSearchIndexForTesting();
+  assert.equal(loadShardIndex("a", tinyBm25Index), true);
+  for (const q of ["python", "python testing"]) {
+    const sharded = bm25SearchSharded(q, 10);
+    const single = bm25Search(tinyBm25Index, q, 10);
+    assert.deepEqual(sharded, single, `query ${JSON.stringify(q)}`);
+  }
+  resetSearchIndexForTesting();
 });
 
 // Leave the module in a sane state for anything that runs after this file.
