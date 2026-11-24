@@ -1,0 +1,569 @@
+{
+  "method": "BM25 optimised (local)",
+  "api": "http://localhost:8787/api/answer",
+  "ranker": "bm25",
+  "overall": {
+    "n_queries": 24,
+    "n_scored": 24,
+    "n_failed": 0,
+    "precision_at_10": 0.1,
+    "recall_at_10": 0.1,
+    "mrr": 0.2092
+  },
+  "per_category": {
+    "domain": {
+      "n": 10,
+      "precision_at_10": 0.14,
+      "recall_at_10": 0.14,
+      "mrr": 0.2253
+    },
+    "intent": {
+      "n": 5,
+      "precision_at_10": 0.04,
+      "recall_at_10": 0.04,
+      "mrr": 0.0619
+    },
+    "keyword": {
+      "n": 5,
+      "precision_at_10": 0.16,
+      "recall_at_10": 0.16,
+      "mrr": 0.4917
+    },
+    "typo": {
+      "n": 4,
+      "precision_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0
+    }
+  },
+  "queries": [
+    {
+      "id": "q01",
+      "query": "best python testing tool",
+      "category": "keyword",
+      "failed": false,
+      "precision_at_10": 0.4,
+      "recall_at_10": 0.4,
+      "mrr": 1.0,
+      "hits": 4,
+      "returned_top10": [
+        "locust",
+        "jumpstarter",
+        "wshobson-agents",
+        "pytest",
+        "playwright-python",
+        "seleniumbase",
+        "impacket",
+        "Python Developer Tooling Handbook",
+        "QTradeX",
+        "CoinPulse"
+      ]
+    },
+    {
+      "id": "q02",
+      "query": "best react framework",
+      "category": "keyword",
+      "failed": false,
+      "precision_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "hits": 0,
+      "returned_top10": [
+        "React Native",
+        "Zentral",
+        "RxFlow",
+        "Expo",
+        "fasterreact",
+        "Alpine.js",
+        "Draft.js",
+        "ReactorKit",
+        "CardParts",
+        "reflex"
+      ]
+    },
+    {
+      "id": "q03",
+      "query": "best javascript testing framework",
+      "category": "keyword",
+      "failed": false,
+      "precision_at_10": 0.2,
+      "recall_at_10": 0.2,
+      "mrr": 1.0,
+      "hits": 2,
+      "returned_top10": [
+        "jasmine",
+        "qunit",
+        "Insider CLI",
+        "Micro Unit Testing Framework (by KyleChamberlin)",
+        "Expecto",
+        "jumpstarter",
+        "JavaScript MVC and Templating Frameworks",
+        "DNS Rebind Toolkit",
+        "Fuzz-Testing Meets LLM-Based Agents: An Automated and Efficient Framework for Jailbreaking Text-To-Image Generation Mode",
+        "RestTestGen"
+      ]
+    },
+    {
+      "id": "q04",
+      "query": "machine learning library",
+      "category": "keyword",
+      "failed": false,
+      "precision_at_10": 0.1,
+      "recall_at_10": 0.1,
+      "mrr": 0.3333,
+      "hits": 1,
+      "returned_top10": [
+        "Machine Learning",
+        "MLDB",
+        "ML.NET",
+        "Turi Create",
+        "Beneficial and harmful explanatory machine learning",
+        "machine",
+        "Machine Learning Module",
+        "Awesome Machine Learning with Ruby",
+        "Datumbox",
+        "Automated Biodesign Engineering by Abductive Meta-Interpretive Learning"
+      ]
+    },
+    {
+      "id": "q05",
+      "query": "best database",
+      "category": "keyword",
+      "failed": false,
+      "precision_at_10": 0.1,
+      "recall_at_10": 0.1,
+      "mrr": 0.125,
+      "hits": 1,
+      "returned_top10": [
+        "Database Cleaner",
+        "DBHawk",
+        "Turso",
+        "sqlmap",
+        "Acra",
+        "NoSQLpot",
+        "Kippo-Malware",
+        "Kippo2MySQL",
+        "Kippo2ElasticSearch",
+        "cowrie2neo"
+      ]
+    },
+    {
+      "id": "q06",
+      "query": "best tool for making a website",
+      "category": "intent",
+      "failed": false,
+      "precision_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "hits": 0,
+      "returned_top10": [
+        "SpiderFoot",
+        "modpot",
+        "CCF-VM",
+        "Making a Blind SQL Injection a little less blind",
+        "The 200 That Proved Nothing",
+        "Fuzzle: Making a Puzzle for Fuzzers, 2022",
+        "Packing-Box",
+        "PEiD (CLI)",
+        "anew",
+        "How Google Does It: Making threat detection high-quality, scalable, and modern | Anton Chuvakin, Tim Nguyen"
+      ]
+    },
+    {
+      "id": "q07",
+      "query": "database for beginners",
+      "category": "intent",
+      "failed": false,
+      "precision_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "hits": 0,
+      "returned_top10": [
+        "NoSQL Database Tutorial \u2013 Full Course for Beginners (2:54:52)",
+        "Graph Databases For Beginners: The Basics Of Data Modeling",
+        "Docker for beginners",
+        "Laravel 5.4 For Beginners",
+        "Raspberry Pi Beginners",
+        "Ansible Tutorial for Beginners: Playbook & Examples",
+        "PromQL tutorial for beginners",
+        "Elm: A Beginners' Guide to Elm and Data",
+        "Laraboot: Laravel 5 For Beginners",
+        "AutoIT Scripting For Beginners"
+      ]
+    },
+    {
+      "id": "q08",
+      "query": "user login authentication",
+      "category": "intent",
+      "failed": false,
+      "precision_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "hits": 0,
+      "returned_top10": [
+        "logintc.com",
+        "Casdoor",
+        "awa",
+        "FastAPI Login",
+        "angularx-social-login",
+        "google-authenticator",
+        "zitadel",
+        "Descope",
+        "Yubico",
+        "gologin"
+      ]
+    },
+    {
+      "id": "q09",
+      "query": "best way to deploy an app",
+      "category": "intent",
+      "failed": false,
+      "precision_at_10": 0.1,
+      "recall_at_10": 0.1,
+      "mrr": 0.1667,
+      "hits": 1,
+      "returned_top10": [
+        "HardenStance",
+        "Plume",
+        "Gravitee",
+        "Strike48",
+        "Medusa Edge API Gateway",
+        "Railway",
+        "No Code",
+        "claudiajs/claudia :fire::fire::fire::fire::fire:",
+        "Gupshup",
+        "Mini Tutorial: Setup AWS Lambda + ACM + API Gateway with AWS Cloud Development Kit"
+      ]
+    },
+    {
+      "id": "q10",
+      "query": "tool to make a mobile app",
+      "category": "intent",
+      "failed": false,
+      "precision_at_10": 0.1,
+      "recall_at_10": 0.1,
+      "mrr": 0.1429,
+      "hits": 1,
+      "returned_top10": [
+        "Shopify",
+        "Apparent",
+        "ASP.NET Web API",
+        "MVVMCross",
+        "shortcuts-for-framer",
+        "Gemini CLI Desktop",
+        "Bolts-Swift",
+        "Bolts",
+        "Android Support Library",
+        "ember-mobile-pane"
+      ]
+    },
+    {
+      "id": "q11",
+      "query": "best css framework",
+      "category": "domain",
+      "failed": false,
+      "precision_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "hits": 0,
+      "returned_top10": [
+        "panda",
+        "MyLinearLayout",
+        "Ionic Framework",
+        "Apache Netbeans",
+        "Whatsup",
+        "impress.js",
+        "fluidity",
+        "move.js",
+        "sakura",
+        "Simple.css"
+      ]
+    },
+    {
+      "id": "q12",
+      "query": "best api testing tool",
+      "category": "domain",
+      "failed": false,
+      "precision_at_10": 0.1,
+      "recall_at_10": 0.1,
+      "mrr": 0.1111,
+      "hits": 1,
+      "returned_top10": [
+        "API Penetration Testing",
+        "Angular Testing Library",
+        "Astra",
+        "PAPILLON: Efficient and Stealthy Fuzz Testing-Powered Jailbreaks for LLMs, 2025",
+        "Call-Flow Aware API Fuzz Testing for Security of Windows Systems, 2008",
+        "RestTestGen",
+        "AndroidX Test",
+        "sinon-chrome",
+        "Insomnia (\u2b5040k)",
+        "Supertest"
+      ]
+    },
+    {
+      "id": "q13",
+      "query": "best code editor",
+      "category": "domain",
+      "failed": false,
+      "precision_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "hits": 0,
+      "returned_top10": [
+        "Haystack Editor",
+        "SOCTalk",
+        "Radon IDE",
+        "Aurora Editor",
+        "CodeEdit",
+        "Cursor",
+        "Lapce",
+        "LightTable",
+        "LiteEdit",
+        "Zed"
+      ]
+    },
+    {
+      "id": "q14",
+      "query": "best version control",
+      "category": "domain",
+      "failed": false,
+      "precision_at_10": 0.3,
+      "recall_at_10": 0.3,
+      "mrr": 0.25,
+      "hits": 3,
+      "returned_top10": [
+        "Open Source Car Control Project",
+        "Runway",
+        "Cornerstone",
+        "RelaGit",
+        "GitX",
+        "Git",
+        "Dual Smart Thermostat",
+        "Circe",
+        "Suites",
+        "micropglite"
+      ]
+    },
+    {
+      "id": "q15",
+      "query": "best container tool",
+      "category": "domain",
+      "failed": false,
+      "precision_at_10": 0.3,
+      "recall_at_10": 0.3,
+      "mrr": 1.0,
+      "hits": 3,
+      "returned_top10": [
+        "Container",
+        "The container is a lie",
+        "container-diff",
+        "cri-o",
+        "Awesome Container Security",
+        "bcc in a Docker container",
+        "OPEN CONTAINER INITIATIVE",
+        "Open Container Specifications",
+        "App Container basics",
+        "Systemd Container Interface"
+      ]
+    },
+    {
+      "id": "q16",
+      "query": "best monitoring tool",
+      "category": "domain",
+      "failed": false,
+      "precision_at_10": 0.4,
+      "recall_at_10": 0.4,
+      "mrr": 0.5,
+      "hits": 4,
+      "returned_top10": [
+        "Monitoring Your Monitoring\u2019s Monitoring",
+        "Monitoring with Prometheus",
+        "Flask Monitoring Dashboard",
+        "SweetUptime",
+        "Servervana",
+        "Percona Monitoring and Management",
+        "MarionetteOps.com",
+        "Kubernetes monitoring with Prometheus, the ultimate guide",
+        "Setting up Prometheus Monitoring On a Kubernetes Cluster",
+        "Practical Services Monitoring with Prometheus and Docker"
+      ]
+    },
+    {
+      "id": "q17",
+      "query": "best ci cd tool",
+      "category": "domain",
+      "failed": false,
+      "precision_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "hits": 0,
+      "returned_top10": [
+        "NST - Network Security Toolkit",
+        "Server-Side Swift Weekly",
+        "nixpkgs-review",
+        "emperror",
+        "railsbestpractices",
+        "Page Speed",
+        "Sitespeed.io",
+        "UGCLive free tools",
+        "agent-rules-kit",
+        "extreme-angular"
+      ]
+    },
+    {
+      "id": "q18",
+      "query": "best static site generator",
+      "category": "domain",
+      "failed": false,
+      "precision_at_10": 0.1,
+      "recall_at_10": 0.1,
+      "mrr": 0.1667,
+      "hits": 1,
+      "returned_top10": [
+        "DocPad",
+        "Charge",
+        "Wyam",
+        "docsify",
+        "lume",
+        "Gatsby.js",
+        "Gridsome",
+        "pelican",
+        "nikola",
+        "zensical"
+      ]
+    },
+    {
+      "id": "q19",
+      "query": "best http client",
+      "category": "domain",
+      "failed": false,
+      "precision_at_10": 0.1,
+      "recall_at_10": 0.1,
+      "mrr": 0.125,
+      "hits": 1,
+      "returned_top10": [
+        "flyology-http",
+        "lua-http",
+        "certbot",
+        "GRR Rapid Response",
+        "XSS without HTML: Client-Side Template Injection with AngularJS",
+        "\u041e\u0441\u043e\u0431\u0435\u043d\u043d\u043e\u0441\u0442\u0438 Safari \u0432 client-side \u0430\u0442\u0430\u043a\u0430\u0445",
+        "SecuriTool",
+        "OkHttp",
+        "Ktor Client",
+        "Frpc-Desktop"
+      ]
+    },
+    {
+      "id": "q20",
+      "query": "best json tool",
+      "category": "domain",
+      "failed": false,
+      "precision_at_10": 0.1,
+      "recall_at_10": 0.1,
+      "mrr": 0.1,
+      "hits": 1,
+      "returned_top10": [
+        "JSON Toolkit",
+        "JSON, package.json",
+        "JSON BinPack",
+        "JSON Schema to Elm",
+        "Dadroit JSON Viewer",
+        "JSON Schema",
+        "Ruby JSON Schema Validator",
+        "JSON Formatter and Validator",
+        "crystal-json-socket",
+        "Jackson JSON Processor"
+      ]
+    },
+    {
+      "id": "q21",
+      "query": "pythn testing",
+      "category": "typo",
+      "failed": false,
+      "precision_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "hits": 0,
+      "returned_top10": [
+        "Expecto",
+        "Testing Library",
+        "UI Testing Cheat Sheet",
+        "scripted-testing",
+        "compile-testing",
+        "react testing library",
+        "Angular Testing Library",
+        "Preact Testing Library",
+        "@testing-library/svelte",
+        "swift-testing-expectation"
+      ]
+    },
+    {
+      "id": "q22",
+      "query": "databse for beginners",
+      "category": "typo",
+      "failed": false,
+      "precision_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "hits": 0,
+      "returned_top10": [
+        "Docker for beginners",
+        "Laravel 5.4 For Beginners",
+        "Raspberry Pi Beginners",
+        "Ansible Tutorial for Beginners: Playbook & Examples",
+        "PromQL tutorial for beginners",
+        "Elm: A Beginners' Guide to Elm and Data",
+        "Laraboot: Laravel 5 For Beginners",
+        "AutoIT Scripting For Beginners",
+        "Less CSS Tutorials for Beginners",
+        "Maria.cloud (Online IDE for beginners)"
+      ]
+    },
+    {
+      "id": "q23",
+      "query": "authentcation",
+      "category": "typo",
+      "failed": false,
+      "precision_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "hits": 0,
+      "returned_top10": [
+        "sindresorhus/awesome",
+        "sindresorhus/awesome-nodejs",
+        "sindresorhus/quick-look-plugins",
+        "sindresorhus/type-fest",
+        "sindresorhus/ky",
+        "sindresorhus/got",
+        "sindresorhus/pure",
+        "sindresorhus/ora",
+        "sindresorhus/github-markdown-css",
+        "sindresorhus/Gifski"
+      ]
+    },
+    {
+      "id": "q24",
+      "query": "javascrpt framework",
+      "category": "typo",
+      "failed": false,
+      "precision_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "hits": 0,
+      "returned_top10": [
+        "Laminas",
+        "Serverless Framework",
+        "Sming Framework",
+        "Ash Framework",
+        "FW/1 - Framework One",
+        "Rapid Open Hardware Development (ROHD) Framework",
+        "CodeBehind Framework",
+        "AspectCore Framework",
+        "Kigs framework",
+        "matreshka"
+      ]
+    }
+  ]
+}
